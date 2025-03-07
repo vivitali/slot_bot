@@ -1,0 +1,26 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Debug Login",
+            "type": "shell",
+            "command": "${command:python.interpreterPath}",
+            "args": ["${workspaceFolder}/visa_slot_checker.py", "--debug-login"],
+            "problemMatcher": []
+        },
+        {
+            "label": "Debug Date Check",
+            "type": "shell",
+            "command": "${command:python.interpreterPath}",
+            "args": ["${workspaceFolder}/visa_slot_checker.py", "--debug-dates"],
+            "problemMatcher": []
+        },
+        {
+            "label": "Run Component Tests",
+            "type": "shell",
+            "command": "${command:python.interpreterPath}",
+            "args": ["${workspaceFolder}/test_components.py"],
+            "problemMatcher": []
+        }
+    ]
+}
