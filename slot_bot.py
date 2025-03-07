@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-US Visa Appointment Slot Checker Bot with Selenium
---------------------------------------------------
+US Visa Appointment Slot Checker Bot
+------------------------------------
 This script monitors the US visa appointment website for available slots
-using Selenium for web automation and sends notifications via Telegram.
+using direct HTTP requests for data retrieval and Selenium for authentication and form submissions.
 
 Designed for deployment on Google Cloud Compute Engine.
 """
@@ -35,6 +35,10 @@ from setup_driver import setup_driver
 from setup_logger import setup_logging
 from utils import get_random_interval
 
+# Import the SessionManager and appointment checker functions
+from session_manager import SessionManager
+from appointment_checker import get_available_dates, get_available_times
+
 # Initialize logger
 logger = setup_logging()
 
@@ -42,12 +46,11 @@ logger = setup_logging()
 CONFIG = load_config()
 
 # Generate URLs based on configuration
-DATE_URL = f"https://ais.usvisa-info.com/{CONFIG['COUNTRY_CODE']}/niv/schedule/{CONFIG['SCHEDULE_ID']}/appointment/days/{CONFIG['FACILITY_ID']}.json?appointments[expedite]=false"
-TIME_URL = f"https://ais.usvisa-info.com/{CONFIG['COUNTRY_CODE']}/niv/schedule/{CONFIG['SCHEDULE_ID']}/appointment/times/{CONFIG['FACILITY_ID']}.json?date=%s&appointments[expedite]=false"
 APPOINTMENT_URL = f"https://ais.usvisa-info.com/{CONFIG['COUNTRY_CODE']}/niv/schedule/{CONFIG['SCHEDULE_ID']}/appointment"
 
 # Initialize global variables
 driver = None
+session_manager = None
 last_seen = None
 last_notification_time = None
 EXIT = False
@@ -93,121 +96,46 @@ def send_telegram_notification(message):
         logger.error(f"Unexpected error sending notification: {e}")
         return False
 
-
-def login():
-    """Log in to the US visa website."""
-    global driver
+def initialize_session():
+    """Initialize or refresh the session."""
+    global driver, session_manager
     
     try:
-        logger.info("Starting login process...")
+        logger.info("Initializing or refreshing session...")
         
-        # Ensure we have a driver
+        # Create session manager if it doesn't exist
+        if session_manager is None:
+            session_manager = SessionManager(
+                username=CONFIG['USERNAME'], 
+                password=CONFIG['PASSWORD'], 
+                country_code=CONFIG['COUNTRY_CODE']
+            )
+        
+        # Try direct requests login first (faster and more efficient)
+      # Initialize WebDriver if needed
         if driver is None or not is_driver_active():
             driver = setup_driver()
             if driver is None:
                 raise Exception("Failed to set up WebDriver")
-
-        # https://ais.usvisa-info.com/en-ca/niv/users/sign_in
-        # Bypass reCAPTCHA
-        driver.get(f"https://ais.usvisa-info.com/{CONFIG['COUNTRY_CODE']}/niv/users/sign_in")
-        time.sleep(get_random_interval(CONFIG['STEP_TIME']))
         
-        try:
-            a = driver.find_element(By.XPATH, '//a[@class="down-arrow bounce"]')
-            a.click()
-            time.sleep(get_random_interval(CONFIG['STEP_TIME']))
-        except Exception as e:
-            logger.warning(f"Could not find bounce arrow: {e}")
-            # Continue anyway
+        # Perform login with Selenium
+        if session_manager.login_with_selenium(driver):
+            logger.info("Login with Selenium successful")
+            return True
         
-        # logger.info("Navigating to login page...")
-        # href = driver.find_element(By.XPATH, '//*[@id="header"]/nav/div[1]/div[1]/div[2]/div[1]/ul/li[3]/a')
-        # href.click()
-        # time.sleep(get_random_interval(CONFIG['STEP_TIME']))
+        logger.error("All login methods failed")
+        return False
         
-        # Wait for login form
-        Wait(driver, 60).until(EC.presence_of_element_located((By.NAME, "commit")))
-        
-        try:
-            logger.info("Clicking bounce arrow again...")
-            a = driver.find_element(By.XPATH, '//a[@class="down-arrow bounce"]')
-            a.click()
-            time.sleep(get_random_interval(CONFIG['STEP_TIME']))
-        except Exception as e:
-            logger.warning(f"Could not find second bounce arrow: {e}")
-            # Continue anyway
-        
-        # Perform the actual login
-        do_login_action()
-        return True
-
-            
     except Exception as e:
-        logger.error(f"Login failed with error: {e}")
-        if CONFIG['DEBUG_MODE']:
-            logger.debug(f"Detailed error: {str(e)}")
+        logger.error(f"Error during session initialization: {e}")
         
         try:
             if driver is not None:
-                driver.save_screenshot('login_error.png')
-                logger.info("Error screenshot saved as login_error.png")
-                
-                if CONFIG['DEBUG_MODE']:
-                    logger.debug(f"Page source at error: {driver.page_source[:1000]}...")
+                driver.save_screenshot('session_error.png')
+                logger.info("Error screenshot saved as session_error.png")
         except:
             pass
             
-        return False
-
-def do_login_action():
-    """Fill in and submit the login form."""
-    try:
-        logger.info("Filling in login form...")
-        
-        # Input email with random delay
-        logger.debug("Entering email...")
-        user = driver.find_element(By.ID, 'user_email')
-        user.clear()
-        for c in CONFIG['USERNAME']:
-            user.send_keys(c)
-            time.sleep(random.uniform(0.05, 0.15))  # Human-like typing
-        time.sleep(random.uniform(1, 3))
-        
-        # Input password with random delay
-        logger.debug("Entering password...")
-        pw = driver.find_element(By.ID, 'user_password')
-        pw.clear()
-        for c in CONFIG['PASSWORD']:
-            pw.send_keys(c)
-            time.sleep(random.uniform(0.05, 0.15))  # Human-like typing
-        time.sleep(random.uniform(1, 3))
-        
-        # Click privacy checkbox
-        logger.debug("Clicking privacy checkbox...")
-        box = driver.find_element(By.CLASS_NAME, 'icheckbox')
-        box.click()
-        time.sleep(random.uniform(1, 3))
-        
-        # Click signin button
-        logger.debug("Clicking submit button...")
-        btn = driver.find_element(By.NAME, 'commit')
-        btn.click()
-        time.sleep(random.uniform(2, 4))
-        
-        # Wait for successful login indicator
-        try:
-            Wait(driver, 60).until(
-                EC.presence_of_element_located((By.XPATH, REGEX_CONTINUE)))
-            logger.info("Login form submitted successfully")
-            return True
-        except Exception as e:
-            logger.error(f"Timeout waiting for login confirmation: {e}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Error during login form submission: {e}")
-        if CONFIG['DEBUG_MODE']:
-            logger.debug(f"Page source at login error: {driver.page_source[:1000]}...")
         return False
 
 def is_driver_active():
@@ -221,41 +149,58 @@ def is_driver_active():
     except:
         return False
 
-def is_logged_in():
-    content = driver.page_source
-
-    if(content.find("error") != -1):
-        return False
-    return True
-
 def get_date():
-    """Get available appointment dates."""
-    global driver
+    """Get available appointment dates using HTTP requests."""
+    global session_manager
     
     try:
-        logger.info(f"Checking for available dates: {DATE_URL}")
+        logger.info("Checking for available appointment dates...")
         
-        # Navigate to the date URL
-        driver.get(DATE_URL)
+        # Ensure we have a valid session
+        # if session_manager is None or not session_manager.is_session_valid():
+        #     logger.warning("Session invalid or not initialized")
+        #     if not initialize_session():
+        #         logger.error("Failed to initialize session")
+        #         return []
         
-        # Check if we're still logged in
-        if not is_logged_in():
-            logger.warning("Session expired, logging in again...")
-            login()
-            return get_date()
+        # Get session details
+        session_cookie, csrf_token = session_manager.get_session_details()
         
-        # Get the JSON response
-        content = driver.find_element(By.TAG_NAME, 'pre').text
+        if not session_cookie or not csrf_token:
+            logger.error("Missing session cookie or CSRF token")
+            return []
         
-        # Parse the dates
-        dates = json.loads(content)
+        # Use HTTP request to get dates
+        dates = get_available_dates(
+            session_cookie=session_cookie,
+            csrf_token=csrf_token,
+            schedule_id=CONFIG['SCHEDULE_ID'],
+            facility_id=CONFIG['FACILITY_ID'],
+            country_code=CONFIG['COUNTRY_CODE']
+        )
+        
+        # If no dates or error, try refreshing the session once
+        if not dates:
+            logger.warning("No dates returned, trying to refresh session...")
+            if initialize_session():
+                session_cookie, csrf_token = session_manager.get_session_details()
+                
+                # Try again with refreshed session
+                dates = get_available_dates(
+                    session_cookie=session_cookie,
+                    csrf_token=csrf_token,
+                    schedule_id=CONFIG['SCHEDULE_ID'],
+                    facility_id=CONFIG['FACILITY_ID'],
+                    country_code=CONFIG['COUNTRY_CODE']
+                )
+        
         logger.info(f"Found {len(dates)} available dates")
-        
         return dates
         
     except Exception as e:
         logger.error(f"Error getting available dates: {e}")
         
+        # Take a screenshot if possible
         try:
             if driver is not None:
                 driver.save_screenshot('date_error.png')
@@ -265,32 +210,41 @@ def get_date():
         return []
 
 def get_time(date):
-    """Get available appointment times for a given date."""
+    """Get available appointment times for a given date using HTTP requests."""
+    global session_manager
+    
     try:
         logger.info(f"Getting available times for date: {date}")
         
-        # Format the URL with the date
-        time_url = TIME_URL % date
+        # Ensure we have a valid session
+        if session_manager is None or not session_manager.is_session_valid():
+            logger.warning("Session invalid or not initialized")
+            if not initialize_session():
+                logger.error("Failed to initialize session")
+                return None
         
-        # Navigate to the time URL
-        driver.get(time_url)
+        # Get session details
+        session_cookie, csrf_token = session_manager.get_session_details()
         
-        # Get the JSON response
-        content = driver.find_element(By.TAG_NAME, 'pre').text
+        # Use HTTP request to get times
+        available_times = get_available_times(
+            session_cookie=session_cookie,
+            csrf_token=csrf_token,
+            schedule_id=CONFIG['SCHEDULE_ID'],
+            facility_id=CONFIG['FACILITY_ID'],
+            date=date,
+            country_code=CONFIG['COUNTRY_CODE']
+        )
         
-        # Parse the times
-        data = json.loads(content)
-        times = data.get("available_times", [])
-        
-        if not times:
+        if not available_times:
             logger.warning(f"No available times found for date {date}")
             return None
             
         # Get the last time slot (usually latest in the day)
-        time = times[-1]
-        logger.info(f"Selected time slot: {date} {time}")
+        time_slot = available_times[-1]
+        logger.info(f"Selected time slot: {date} {time_slot}")
         
-        return time
+        return time_slot
         
     except Exception as e:
         logger.error(f"Error getting available times: {e}")
@@ -298,19 +252,34 @@ def get_time(date):
 
 def reschedule(date):
     """Reschedule appointment to the given date."""
-    global EXIT
+    global EXIT, driver, session_manager
     
     try:
         logger.info(f"Starting reschedule process for date: {date}")
         
         # Get an available time slot
-        time = get_time(date)
-        if not time:
+        time_slot = get_time(date)
+        if not time_slot:
             logger.error("Could not get time slot, aborting reschedule")
             return False
         
+        # For reschedule, we need to use Selenium as it's a more complex form submission
+        # Ensure we have a valid driver and session
+        if driver is None or not is_driver_active():
+            logger.info("Initializing WebDriver for reschedule...")
+            driver = setup_driver()
+            if driver is None:
+                raise Exception("Failed to set up WebDriver")
+            
+            # Ensure we have a valid session
+            if session_manager is None or not session_manager.is_session_valid():
+                if not initialize_session():
+                    raise Exception("Failed to initialize session for reschedule")
+        
         # Navigate to the appointment page
+        logger.info("Navigating to appointment page...")
         driver.get(APPOINTMENT_URL)
+        time.sleep(random.uniform(2, 4))
         
         try:
             # Get form data
@@ -322,27 +291,45 @@ def reschedule(date):
                 "use_consulate_appointment_capacity": driver.find_element(by=By.NAME, value='use_consulate_appointment_capacity').get_attribute('value'),
                 "appointments[consulate_appointment][facility_id]": CONFIG['FACILITY_ID'],
                 "appointments[consulate_appointment][date]": date,
-                "appointments[consulate_appointment][time]": time,
+                "appointments[consulate_appointment][time]": time_slot,
             }
             
             # Get cookies for the request
+            cookies = {"_yatri_session": driver.get_cookie("_yatri_session")["value"]}
+            
+            # Prepare headers
             headers = {
                 "User-Agent": driver.execute_script("return navigator.userAgent;"),
                 "Referer": APPOINTMENT_URL,
-                "Cookie": "_yatri_session=" + driver.get_cookie("_yatri_session")["value"]
+                "X-CSRF-Token": data["authenticity_token"],
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "text/html,application/xhtml+xml,application/xml"
             }
+            
+            # Update session manager with latest session info
+            session_manager.session_cookie = cookies["_yatri_session"]
+            session_manager.csrf_token = data["authenticity_token"]
             
             # Submit the reschedule request
             logger.info("Submitting reschedule request...")
-            response = driver.request('POST', APPOINTMENT_URL, data=data, headers=headers)
+            import requests
+            response = requests.post(
+                APPOINTMENT_URL,
+                data=data,
+                headers=headers,
+                cookies=cookies,
+                allow_redirects=True
+            )
             
             # Check if reschedule was successful
             if 'Successfully Scheduled' in response.text:
-                msg = f"✅ *Appointment Rescheduled!*\n\nNew appointment date: *{date}*\nTime: *{time}*"
+                msg = f"✅ *Appointment Rescheduled!*\n\nNew appointment date: *{date}*\nTime: *{time_slot}*"
                 send_telegram_notification(msg)
                 
                 # Take a screenshot of the confirmation
                 try:
+                    driver.get(APPOINTMENT_URL)  # Refresh to see confirmation
+                    time.sleep(3)
                     driver.save_screenshot('reschedule_success.png')
                     logger.info("Saved confirmation screenshot")
                 except:
@@ -351,7 +338,7 @@ def reschedule(date):
                 EXIT = True
                 return True
             else:
-                msg = f"❌ *Reschedule Failed*\n\nAttempted date: *{date}*\nTime: *{time}*\n\nThe slot may have been taken by someone else."
+                msg = f"❌ *Reschedule Failed*\n\nAttempted date: *{date}*\nTime: *{time_slot}*\n\nThe slot may have been taken by someone else."
                 send_telegram_notification(msg)
                 return False
                 
@@ -501,12 +488,16 @@ def setup_telegram_bot():
             # Get bot status
             is_checking = context.bot_data.get('checking', False)
             
+            # Get session status
+            session_valid = "Yes" if session_manager and session_manager.is_session_valid() else "No"
+            
             update.message.reply_text(
                 f"📊 *Bot Status*\n\n"
                 f"Version: {VERSION}\n"
                 f"Host: {hostname}\n"
                 f"Uptime: {uptime}\n"
                 f"Current appointment: {CONFIG['MY_SCHEDULE_DATE']}\n"
+                f"Session valid: {session_valid}\n"
                 f"Check interval: {CONFIG['CHECK_INTERVAL']} seconds\n"
                 f"Currently checking: {'Yes' if is_checking else 'No'}\n\n"
                 f"Next automatic check: {get_next_check_time()}",
@@ -557,12 +548,7 @@ def check_appointments():
     try:
         logger.info("Starting appointment check...")
         
-        # Ensure driver is active
-        if driver is None or not is_driver_active():
-            setup_driver()
-            login()
-        
-        # Get available dates
+        # Get available dates using HTTP request
         dates = get_date()[:10]  # Limit to top 10 dates
         
         if not dates:
@@ -628,7 +614,7 @@ def cleanup():
 
 def main():
     """Main entry point for the application."""
-    global driver, EXIT
+    global driver, EXIT, session_manager
     
     try:
         # Print startup banner
@@ -637,14 +623,16 @@ def main():
         print(f"  Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"=" * 60)
         
-        # Initialize WebDriver
-        driver = setup_driver()
-        if driver is None:
-            raise Exception("Failed to initialize WebDriver")
+        # Initialize session
+        session_manager = SessionManager(
+            username=CONFIG['USERNAME'],
+            password=CONFIG['PASSWORD'],
+            country_code=CONFIG['COUNTRY_CODE']
+        )
         
-        # Log in to the website
-        if not login():
-            raise Exception("Initial login failed")
+        # Try to initialize session (first with requests, then with Selenium if needed)
+        if not initialize_session():
+            raise Exception("Failed to initialize session")
         
         # Set up Telegram bot
         telegram_bot = setup_telegram_bot()

@@ -1,9 +1,10 @@
 # Core dependencies
 selenium==4.9.0
 webdriver-manager==3.8.6
-python-telegram-bot==13.7
+python-telegram-bot==
 pytz==2022.6
 schedule==1.1.0
 python-dotenv==0.21.0
 configparser==5.3.0
 requests==2.28.1
+beautifulsoup4==4.11.1
