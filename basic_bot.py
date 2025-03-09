@@ -55,7 +55,7 @@ def check_internet_connection():
 
 def main():
     # Get the bot token from environment variables
-    bot_token = os.getenv('TELEGCannot reach Telegram APIRAM_TOKEN')
+    bot_token = os.getenv('TELEGRAM_TOKEN')
 
     if not bot_token:
         print("Error: TELEGRAM_TOKEN not found in .env file")
