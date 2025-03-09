@@ -1,35 +1,18 @@
-#!/usr/bin/env python3
-"""
-US Visa Appointment Checker
-
-This script checks for available US visa appointments and loads all configuration from a .env file.
-
-Features:
-1. Check for available appointments at a specific facility
-2. Check available dates and times
-3. Send notifications when slots become available
-
-Configuration is read from a .env file in the same directory.
-
-Usage:
-    python visa_checker.py [--continuous] [--interval 300]
-
-Optional Arguments:
-    --continuous: Run in continuous mode, checking periodically
-    --interval: Check interval in seconds for continuous mode (default: 300)
-"""
-
-import argparse
 import json
+import logging
 import os
 import re
-import sys
-import time
-from datetime import datetime
-
 import requests
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
+
+from utils import get_random_interval
+
+# Set up logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
 class VisaAppointmentChecker:
     def __init__(self, email, password, schedule_id, country_code="en-ca", visa_type="niv", facility_id=None):
@@ -87,7 +70,7 @@ class VisaAppointmentChecker:
         csrf_token_meta = soup.find('meta', {'name': 'csrf-token'})
         
         if not csrf_token_meta:
-            print("Failed to extract CSRF token")
+            logger.error("Failed to extract CSRF token")
             return None
             
         return csrf_token_meta['content']
@@ -96,7 +79,7 @@ class VisaAppointmentChecker:
         """Log in to the visa appointment system"""
         try:
             # Initial request to get CSRF token
-            print("Fetching login page to get CSRF token...")
+            logger.info("Fetching login page to get CSRF token...")
             headers = {
                 **self.common_headers,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -113,13 +96,13 @@ class VisaAppointmentChecker:
             # Extract CSRF token
             self.csrf_token = self.get_csrf_token(response.text)
             if not self.csrf_token:
-                print("Failed to obtain CSRF token")
+                logger.error("Failed to obtain CSRF token")
                 return False
             
-            print(f"CSRF token obtained: {self.csrf_token[:10]}...")
+            logger.info(f"CSRF token obtained: {self.csrf_token[:10]}...")
             
             # Perform login
-            print(f"Logging in with email: {self.email}...")
+            logger.info(f"Logging in with email: {self.email}...")
             login_headers = {
                 **self.common_headers,
                 "Accept": "*/*;q=0.5, text/javascript, application/javascript, application/ecmascript, application/x-ecmascript",
@@ -150,25 +133,25 @@ class VisaAppointmentChecker:
             
             # Check if login was successful - redirected to account page
             if login_response.status_code == 200:
-                print("Login successful")
+                logger.info("Login successful")
                 self.is_logged_in = True
                 return True
             else:
-                print("Login failed - incorrect credentials or captcha required")
+                logger.error("Login failed - incorrect credentials or captcha required")
                 return False
                 
         except requests.RequestException as e:
-            print(f"Error during login: {e}")
+            logger.error(f"Error during login: {e}")
             return False
     
     def check_appointment_availability(self):
         """Check if appointments are available in the payment page"""
         if not self.is_logged_in and not self.login():
-            print("Not logged in. Please log in first.")
+            logger.error("Not logged in. Please log in first.")
             return False
         
         try:
-            print("Checking appointment availability...")
+            logger.info("Checking appointment availability...")
             headers = {
                 **self.common_headers,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -184,28 +167,28 @@ class VisaAppointmentChecker:
             response.raise_for_status()
             
             if "There are no available appointments" in response.text:
-                print("No available appointments.")
+                logger.info("No available appointments.")
                 return False
             else:
-                print("Appointments available!")
+                logger.info("Appointments available!")
                 return True
                 
         except requests.RequestException as e:
-            print(f"Error checking appointment availability: {e}")
+            logger.error(f"Error checking appointment availability: {e}")
             return False
     
     def get_available_dates(self):
         """Get available appointment dates for a specific facility"""
         if not self.facility_id:
-            print("No facility ID specified. Cannot check available dates.")
+            logger.error("No facility ID specified. Cannot check available dates.")
             return []
             
         if not self.is_logged_in and not self.login():
-            print("Not logged in. Please log in first.")
+            logger.error("Not logged in. Please log in first.")
             return []
         
         try:
-            print(f"Checking available dates for facility {self.facility_id}...")
+            logger.info(f"Checking available dates for facility {self.facility_id}...")
             headers = {
                 **self.common_headers,
                 "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -223,37 +206,37 @@ class VisaAppointmentChecker:
             try:
                 dates = response.json()
                 if dates:
-                    print(f"Found {len(dates)} available dates:")
+                    logger.info(f"Found {len(dates)} available dates")
                     for date in dates[:5]:  # Show first 5 dates
-                        print(f"  {date.get('date')} - Business day: {date.get('business_day')}")
+                        logger.info(f"  {date.get('date')} - Business day: {date.get('business_day')}")
                     
                     if len(dates) > 5:
-                        print(f"  ... and {len(dates) - 5} more dates")
+                        logger.info(f"  ... and {len(dates) - 5} more dates")
                 else:
-                    print("No available dates found")
+                    logger.info("No available dates found")
                 
                 return dates
             except json.JSONDecodeError:
-                print("Failed to parse dates response as JSON")
-                print(f"Response: {response.text[:200]}...")
+                logger.error("Failed to parse dates response as JSON")
+                logger.error(f"Response: {response.text[:200]}...")
                 return []
                 
         except requests.RequestException as e:
-            print(f"Error fetching available dates: {e}")
+            logger.error(f"Error fetching available dates: {e}")
             return []
     
     def get_available_times(self, date):
         """Get available appointment times for a specific date"""
         if not self.facility_id:
-            print("No facility ID specified. Cannot check available times.")
+            logger.error("No facility ID specified. Cannot check available times.")
             return []
             
         if not self.is_logged_in and not self.login():
-            print("Not logged in. Please log in first.")
+            logger.error("Not logged in. Please log in first.")
             return []
         
         try:
-            print(f"Checking available times for date {date}...")
+            logger.info(f"Checking available times for date {date}...")
             time_url = self.time_url % date
             
             headers = {
@@ -275,20 +258,20 @@ class VisaAppointmentChecker:
                 available_times = data.get('available_times', [])
                 
                 if available_times:
-                    print(f"Found {len(available_times)} available times:")
+                    logger.info(f"Found {len(available_times)} available times")
                     for time_slot in available_times:
-                        print(f"  {time_slot}")
+                        logger.info(f"  {time_slot}")
                 else:
-                    print("No available times found for this date")
+                    logger.info("No available times found for this date")
                 
                 return available_times
             except json.JSONDecodeError:
-                print("Failed to parse times response as JSON")
-                print(f"Response: {response.text[:200]}...")
+                logger.error("Failed to parse times response as JSON")
+                logger.error(f"Response: {response.text[:200]}...")
                 return []
                 
         except requests.RequestException as e:
-            print(f"Error fetching available times: {e}")
+            logger.error(f"Error fetching available times: {e}")
             return []
     
     def get_session_details(self):
@@ -308,7 +291,7 @@ class VisaAppointmentChecker:
     def check_and_print_availability(self):
         """Full check of appointment availability with detailed output"""
         if not self.login():
-            print("Login failed. Cannot check appointments.")
+            logger.error("Login failed. Cannot check appointments.")
             return False
         
         # Check general availability
@@ -316,88 +299,96 @@ class VisaAppointmentChecker:
         
         # If facility ID is provided, check specific dates and times
         if has_appointments and self.facility_id:
-            print("\nFetching available dates:")
+            logger.info("\nFetching available dates:")
             dates = self.get_available_dates()
             
             if dates:
                 # Get times for the first available date
                 first_date = dates[0].get('date')
-                print(f"\nFetching available times for the first date ({first_date}):")
+                logger.info(f"\nFetching available times for the first date ({first_date}):")
                 times = self.get_available_times(first_date)
         
         return has_appointments
 
-def load_config():
-    """Load configuration from .env file"""
-    # Load .env file
-    load_dotenv()
-    
-    # Required parameters
-    required_params = ['VISA_EMAIL', 'VISA_PASSWORD', 'SCHEDULE_ID']
-    missing_params = [param for param in required_params if not os.getenv(param)]
-    
-    if missing_params:
-        print(f"Error: Missing required parameters in .env file: {', '.join(missing_params)}")
-        print("Please create a .env file with the required parameters.")
-        sys.exit(1)
-    
-    # Load parameters
-    config = {
-        'email': os.getenv('VISA_EMAIL'),
-        'password': os.getenv('VISA_PASSWORD'),
-        'schedule_id': os.getenv('SCHEDULE_ID'),
-        'country_code': os.getenv('COUNTRY_CODE', 'en-ca'),
-        'visa_type': os.getenv('VISA_TYPE', 'niv'),
-        'facility_id': os.getenv('FACILITY_ID'),
-        'check_interval': int(os.getenv('CHECK_INTERVAL', '300')),
-    }
-    
-    print(f"Configuration loaded successfully:")
-    print(f"  Email: {config['email']}")
-    print(f"  Schedule ID: {config['schedule_id']}")
-    print(f"  Country Code: {config['country_code']}")
-    print(f"  Visa Type: {config['visa_type']}")
-    print(f"  Facility ID: {config['facility_id'] or 'Not specified'}")
-    print(f"  Check Interval: {config['check_interval']} seconds")
-    
-    return config
-
-def main():
-    parser = argparse.ArgumentParser(description="Check for available US visa appointments")
-    parser.add_argument("--continuous", action="store_true", help="Run in continuous mode, checking periodically")
-    parser.add_argument("--interval", type=int, help="Check interval in seconds for continuous mode (overrides .env)")
-    
-    args = parser.parse_args()
-    
-    # Load configuration from .env file
-    config = load_config()
-    
-    # Override interval from command line if provided
-    if args.interval:
-        config['check_interval'] = args.interval
-    
-    # Create checker instance
-    checker = VisaAppointmentChecker(
-        config['email'],
-        config['password'],
-        config['schedule_id'],
-        config['country_code'],
-        config['visa_type'],
-        config['facility_id']
-    )
-    
-    if args.continuous:
-        print(f"Running in continuous mode, checking every {config['check_interval']} seconds. Press Ctrl+C to stop.")
-        try:
-            while True:
-                print(f"\n=== Check at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
-                checker.check_and_print_availability()
-                print(f"Sleeping for {config['check_interval']} seconds...")
-                time.sleep(config['check_interval'])
-        except KeyboardInterrupt:
-            print("\nExiting continuous mode.")
-    else:
-        checker.check_and_print_availability()
-
+# If this file is run directly, it can still function as a standalone script
 if __name__ == "__main__":
-    main()
+    import sys
+    import time
+    import argparse
+    from dotenv import load_dotenv
+    from datetime import datetime
+    
+    def load_config():
+        """Load configuration from .env file"""
+        # Load .env file
+        load_dotenv()
+        
+        # Required parameters
+        required_params = ['VISA_EMAIL', 'VISA_PASSWORD', 'SCHEDULE_ID']
+        missing_params = [param for param in required_params if not os.getenv(param)]
+        
+        if missing_params:
+            print(f"Error: Missing required parameters in .env file: {', '.join(missing_params)}")
+            print("Please create a .env file with the required parameters.")
+            sys.exit(1)
+        
+        # Load parameters
+        config = {
+            'email': os.getenv('VISA_EMAIL'),
+            'password': os.getenv('VISA_PASSWORD'),
+            'schedule_id': os.getenv('SCHEDULE_ID'),
+            'country_code': os.getenv('COUNTRY_CODE', 'en-ca'),
+            'visa_type': os.getenv('VISA_TYPE', 'niv'),
+            'facility_id': os.getenv('FACILITY_ID'),
+            'check_interval': get_random_interval(int(os.getenv('CHECK_INTERVAL', '300'))),
+        }
+        
+        print(f"Configuration loaded successfully:")
+        print(f"  Email: {config['email']}")
+        print(f"  Schedule ID: {config['schedule_id']}")
+        print(f"  Country Code: {config['country_code']}")
+        print(f"  Visa Type: {config['visa_type']}")
+        print(f"  Facility ID: {config['facility_id'] or 'Not specified'}")
+        print(f"  Check Interval: {config['check_interval']} seconds")
+        
+        return config
+    
+    def main():
+        parser = argparse.ArgumentParser(description="Check for available US visa appointments")
+        parser.add_argument("--continuous", action="store_true", help="Run in continuous mode, checking periodically")
+        parser.add_argument("--interval", type=int, help="Check interval in seconds for continuous mode (overrides .env)")
+        
+        args = parser.parse_args()
+        
+        # Load configuration from .env file
+        config = load_config()
+        
+        # Override interval from command line if provided
+        if args.interval:
+            config['check_interval'] = args.interval
+        
+        # Create checker instance
+        checker = VisaAppointmentChecker(
+            config['email'],
+            config['password'],
+            config['schedule_id'],
+            config['country_code'],
+            config['visa_type'],
+            config['facility_id']
+        )
+        
+        if args.continuous:
+            print(f"Running in continuous mode, checking every {config['check_interval']} seconds. Press Ctrl+C to stop.")
+            try:
+                while True:
+                    print(f"\n=== Check at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===")
+                    checker.check_and_print_availability()
+                    print(f"Sleeping for {config['check_interval']} seconds...")
+                    time.sleep(config['check_interval'])
+            except KeyboardInterrupt:
+                print("\nExiting continuous mode.")
+        else:
+            checker.check_and_print_availability()
+
+    if __name__ == "__main__":
+        main()

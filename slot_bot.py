@@ -3,7 +3,7 @@
 US Visa Appointment Slot Checker Bot
 ------------------------------------
 This script monitors the US visa appointment website for available slots
-using direct HTTP requests for data retrieval and Selenium for authentication and form submissions.
+using direct HTTP requests for data retrieval and Selenium for authentication.
 
 Designed for deployment on Google Cloud Compute Engine.
 """
@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 
 import pytz
 import schedule
+from dotenv import load_dotenv
 from selenium.webdriver.common.by import By
 # Selenium related imports
 from selenium.webdriver.support import expected_conditions as EC
@@ -28,9 +29,9 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import Updater, CommandHandler
 
-from config_loader import load_config
 # Import from our modules
-from constants import VERSION, REGEX_CONTINUE
+from config_loader import load_config
+from constants import VERSION
 from setup_driver import setup_driver
 from setup_logger import setup_logging
 from utils import get_random_interval
@@ -41,6 +42,9 @@ from appointment_checker import get_available_dates, get_available_times
 
 # Initialize logger
 logger = setup_logging()
+
+# Load environment variables
+
 
 # Load configuration
 CONFIG = load_config()
@@ -110,8 +114,7 @@ def initialize_session():
                 country_code=CONFIG['COUNTRY_CODE']
             )
         
-        # Try direct requests login first (faster and more efficient)
-      # Initialize WebDriver if needed
+        # Initialize WebDriver if needed
         if driver is None or not is_driver_active():
             driver = setup_driver()
             if driver is None:
@@ -122,9 +125,12 @@ def initialize_session():
             if session_manager.login_with_selenium(driver):
                 logger.info("Login with Selenium successful")
                 return True
-        
-        logger.error("All login methods failed")
-        return False
+            else:
+                logger.error("Login with Selenium failed")
+                return False
+        else:
+            logger.info("Already logged in")
+            return True
         
     except Exception as e:
         logger.error(f"Error during session initialization: {e}")
@@ -151,7 +157,7 @@ def is_driver_active():
 
 def get_date():
     """Get available appointment dates using HTTP requests."""
-    global session_manager
+    global session_manager, driver
     
     try:
         logger.info("Checking for available appointment dates...")
@@ -176,7 +182,8 @@ def get_date():
             csrf_token=csrf_token,
             schedule_id=CONFIG['SCHEDULE_ID'],
             facility_id=CONFIG['FACILITY_ID'],
-            country_code=CONFIG['COUNTRY_CODE']
+            country_code=CONFIG['COUNTRY_CODE'],
+            is_expedite=False
         )
         
         # If no dates or error, try refreshing the session once
@@ -191,7 +198,8 @@ def get_date():
                     csrf_token=csrf_token,
                     schedule_id=CONFIG['SCHEDULE_ID'],
                     facility_id=CONFIG['FACILITY_ID'],
-                    country_code=CONFIG['COUNTRY_CODE']
+                    country_code=CONFIG['COUNTRY_CODE'],
+                    is_expedite=False
                 )
         
         logger.info(f"Found {len(dates)} available dates")
@@ -211,13 +219,13 @@ def get_date():
 
 def get_time(date):
     """Get available appointment times for a given date using HTTP requests."""
-    global session_manager
+    global session_manager, driver
     
     try:
         logger.info(f"Getting available times for date: {date}")
         
         # Ensure we have a valid session
-        if session_manager is None or not session_manager.is_session_valid():
+        if session_manager is None or not session_manager.is_logged_in(driver):
             logger.warning("Session invalid or not initialized")
             if not initialize_session():
                 logger.error("Failed to initialize session")
@@ -233,7 +241,8 @@ def get_time(date):
             schedule_id=CONFIG['SCHEDULE_ID'],
             facility_id=CONFIG['FACILITY_ID'],
             date=date,
-            country_code=CONFIG['COUNTRY_CODE']
+            country_code=CONFIG['COUNTRY_CODE'],
+            is_expedite=False
         )
         
         if not available_times:
@@ -272,7 +281,7 @@ def reschedule(date):
                 raise Exception("Failed to set up WebDriver")
             
             # Ensure we have a valid session
-            if session_manager is None or not session_manager.is_session_valid():
+            if session_manager is None or not session_manager.is_logged_in(driver):
                 if not initialize_session():
                     raise Exception("Failed to initialize session for reschedule")
         
@@ -489,7 +498,7 @@ def setup_telegram_bot():
             is_checking = context.bot_data.get('checking', False)
             
             # Get session status
-            session_valid = "Yes" if session_manager and session_manager.is_session_valid() else "No"
+            session_valid = "Yes" if driver and session_manager and session_manager.is_logged_in(driver) else "No"
             
             update.message.reply_text(
                 f"📊 *Bot Status*\n\n"
@@ -630,7 +639,7 @@ def main():
             country_code=CONFIG['COUNTRY_CODE']
         )
         
-        # Try to initialize session (first with requests, then with Selenium if needed)
+        # Try to initialize session with Selenium
         if not initialize_session():
             raise Exception("Failed to initialize session")
         

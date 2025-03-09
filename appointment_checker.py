@@ -65,7 +65,7 @@ def get_available_dates(
         )
 
         # Raise an exception for bad status codes
-        response.raise_for_status()
+        # response.raise_for_status()
 
         # Parse JSON response
         data = response.json()
