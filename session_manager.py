@@ -10,6 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,7 +50,7 @@ class SessionManager:
 
             # Navigate to the main page
             driver.get(f"https://ais.usvisa-info.com/{self.country_code}/niv")
-            time.sleep(random.uniform(1, 2))
+            time.sleep(random.uniform(1, 3))
 
             # Click continue if needed
             try:
@@ -64,7 +65,7 @@ class SessionManager:
                 sign_in_link = driver.find_element(By.XPATH,
                                                    '//*[@id="header"]/nav/div[1]/div[1]/div[2]/div[1]/ul/li[3]/a')
                 sign_in_link.click()
-                time.sleep(random.uniform(1, 2))
+                time.sleep(random.uniform(1, 3))
             except Exception as e:
                 logger.error(f"Could not find sign in link: {e}")
                 return False
@@ -181,3 +182,39 @@ class SessionManager:
             Tuple containing the session cookie and CSRF token
         """
         return self.session_cookie, self.csrf_token
+    
+    def is_logged_in(self, driver):
+            """
+            Check if the user is logged in by verifying if the Groups element is present.
+            
+            Args:
+                driver: Selenium WebDriver instance
+                
+            Returns:
+                bool: True if logged in, False otherwise
+            """
+            try:
+                # Wait a short time for the element to be present
+
+                
+                # Maximum time to wait for the element (in seconds)
+                wait_time = 5
+                
+                # Wait for the element to be present
+                element = WebDriverWait(driver, wait_time).until(
+                    EC.presence_of_element_located((By.XPATH, '//*[@id="main"]/div[2]/div[1]/div/div[1]/div'))
+                )
+                
+                # Check if the element contains the text 'Groups'
+                element_text = element.text
+                logger.debug(f"Found element with text: '{element_text}'")
+                
+                # Return True if 'Groups' is in the element text
+                is_logged_in = 'Groups' in element_text
+                logger.info(f"Login status check: {'Logged in' if is_logged_in else 'Not logged in'}")
+                return is_logged_in
+                
+            except Exception as e:
+                logger.warning(f"Error checking login status: {e}")
+                # If there's an error, assume not logged in
+                return False

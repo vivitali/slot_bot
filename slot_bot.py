@@ -72,7 +72,6 @@ def send_telegram_notification(message):
         
         # Add hostname and time info
         hostname = socket.gethostname()
-        time_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
         tz = pytz.timezone(CONFIG['TIMEZONE'])
         local_time = current_time.astimezone(tz).strftime('%Y-%m-%d %H:%M:%S %Z')
         
@@ -119,9 +118,10 @@ def initialize_session():
                 raise Exception("Failed to set up WebDriver")
         
         # Perform login with Selenium
-        if session_manager.login_with_selenium(driver):
-            logger.info("Login with Selenium successful")
-            return True
+        if not session_manager.is_logged_in(driver):
+            if session_manager.login_with_selenium(driver):
+                logger.info("Login with Selenium successful")
+                return True
         
         logger.error("All login methods failed")
         return False
@@ -157,11 +157,11 @@ def get_date():
         logger.info("Checking for available appointment dates...")
         
         # Ensure we have a valid session
-        # if session_manager is None or not session_manager.is_session_valid():
-        #     logger.warning("Session invalid or not initialized")
-        #     if not initialize_session():
-        #         logger.error("Failed to initialize session")
-        #         return []
+        if session_manager is None or not session_manager.is_logged_in(driver): 
+            logger.warning("Session invalid or not initialized")
+            if not initialize_session():
+                logger.error("Failed to initialize session")
+                return []
         
         # Get session details
         session_cookie, csrf_token = session_manager.get_session_details()

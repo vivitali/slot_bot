@@ -29,10 +29,7 @@ def get_available_dates(
         List of available dates as dictionaries
     """
     # Construct the URL
-    url = f"https://ais.usvisa-info.com/{country_code}/niv/schedule/{schedule_id}/appointment/days/{facility_id}.json"
-
-    # Add query parameters
-    params = {"appointments[expedite]": "true" if is_expedite else "false"}
+    url = f"https://ais.usvisa-info.com/{country_code}/niv/schedule/{schedule_id}/appointment/days/{facility_id}.json?appointments[expedite]=false"
 
     # Prepare headers
     headers = {
@@ -62,7 +59,6 @@ def get_available_dates(
         # Make the request
         response = requests.get(
             url,
-            params=params,
             headers=headers,
             cookies=cookies,
             timeout=30
