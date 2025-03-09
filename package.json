@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@getbrevo/brevo": "^2.2.0",
-    "@sendgrid/mail": "^7.7.0",
+    "@sendgrid/mail": "^8.0.0",
     "axios": "^1.8.2",
     "cheerio": "^1.0.0-rc.12",
     "dotenv": "^16.4.7",
