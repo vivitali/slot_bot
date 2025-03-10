@@ -9,6 +9,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Callb
 
 # Import the VisaAppointmentChecker from the separate file
 from checker import VisaAppointmentChecker
+from constants import DEFAULT_CHECK_INTERVAL
+from utils import get_random_interval, is_earlier_date
 
 # Load environment variables
 load_dotenv()
@@ -89,7 +91,7 @@ async def check_visa_appointments(bot, chat_id, user_id, interval=300):
             text=f"Starting visa appointment checks every {interval} seconds. I'll notify you when appointments become available."
         )
         
-        last_available = False
+        last_available_date = None
         counter = 1
         
         while user_id in active_visa_checks:
@@ -105,50 +107,49 @@ async def check_visa_appointments(bot, chat_id, user_id, interval=300):
                     break
             
             # Check for appointments
-            has_appointments = checker.check_appointment_availability()
+            dates = checker.get_available_dates()
+            earlier_appointment = dates[0].get('date')
             
             # If appointments became available and weren't before, send notification
-            if has_appointments and not last_available:
+            if not last_available_date or is_earlier_date(last_available_date, earlier_appointment):
                 await bot.send_message(
                     chat_id=chat_id,
                     text="🔔 VISA APPOINTMENTS AVAILABLE! 🔔\nCheck the system now to book your appointment!"
                 )
                 
                 # If facility ID is provided, get and send available dates
-                if checker.facility_id:
-                    dates = checker.get_available_dates()
-                    if dates:
-                        date_info = []
-                        for date in dates[:5]:  # Get first 5 dates
-                            date_info.append(f"{date.get('date')} - Business day: {date.get('business_day')}")
-                        
+                if dates:
+                    date_info = []
+                    for date in dates[:5]:  # Get first 5 dates
+                        date_info.append(f"{date.get('date')} - Business day: {date.get('business_day')}")
+                    
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=f"Available dates:\n" + "\n".join(date_info)
+                    )
+                    
+                    # Get times for the first available date
+                    first_date = dates[0].get('date')
+                    times = checker.get_available_times(first_date)
+                    if times:
                         await bot.send_message(
                             chat_id=chat_id,
-                            text=f"Available dates:\n" + "\n".join(date_info)
+                            text=f"Available times for {first_date}:\n" + "\n".join(times[:5])
                         )
-                        
-                        # Get times for the first available date
-                        first_date = dates[0].get('date')
-                        times = checker.get_available_times(first_date)
-                        if times:
-                            await bot.send_message(
-                                chat_id=chat_id,
-                                text=f"Available times for {first_date}:\n" + "\n".join(times[:5])
-                            )
             
             # If appointments were available but aren't anymore, send notification
-            elif not has_appointments and last_available:
+            elif not earlier_appointment == last_available_date and last_available_date:
                 await bot.send_message(
                     chat_id=chat_id,
                     text="Visa appointments are no longer available."
                 )
             
             # Update last state
-            last_available = has_appointments
+            last_available_date = earlier_appointment
             
             # Check status
             if counter % 10 == 0:
-                status = "Available" if has_appointments else "Not available"
+                status = "Available #{earlier_appointment}" if earlier_appointment else "Not available"
                 await bot.send_message(
                     chat_id=chat_id,
                     text=f"Status update (check #{counter}): Visa appointments: {status}"
@@ -216,9 +217,7 @@ async def start_visa(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Chat ID {stored_chat_id} stored during visa check")
     
     # Parse interval if provided
-    interval = 300  # Default 5 minutes
-    if context.args and context.args[0].isdigit():
-        interval = int(context.args[0])
+    interval = get_random_interval(DEFAULT_CHECK_INTERVAL)
     
     # Cancel any existing visa check for this user
     if user_id in active_visa_checks:
@@ -397,7 +396,7 @@ def main():
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("start_visa", start_visa))  # New command
         application.add_handler(CommandHandler("stop", stop))
-        application.add_handler(CommandHandler("stopvisa", stop_visa))
+        application.add_handler(CommandHandler("stop_visa", stop_visa))
         application.add_handler(CommandHandler("status", status))
         application.add_handler(CallbackQueryHandler(button_callback))
         

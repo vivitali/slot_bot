@@ -15,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class VisaAppointmentChecker:
-    def __init__(self, email, password, schedule_id, country_code="en-ca", visa_type="niv", facility_id=None):
+    def __init__(self, email, password, schedule_id, country_code="en-ca", visa_type="niv", facility_id=None, check_interval=300):
         """
         Initialize the visa appointment checker.
         
@@ -33,7 +33,7 @@ class VisaAppointmentChecker:
         self.country_code = country_code
         self.visa_type = visa_type
         self.facility_id = facility_id
-        
+        self.check_interval = check_interval
         # Session and auth data
         self.session = requests.Session()
         self.csrf_token = None
@@ -295,10 +295,9 @@ class VisaAppointmentChecker:
             return False
         
         # Check general availability
-        has_appointments = self.check_appointment_availability()
         
         # If facility ID is provided, check specific dates and times
-        if has_appointments and self.facility_id:
+        if self.facility_id:
             logger.info("\nFetching available dates:")
             dates = self.get_available_dates()
             
@@ -308,7 +307,7 @@ class VisaAppointmentChecker:
                 logger.info(f"\nFetching available times for the first date ({first_date}):")
                 times = self.get_available_times(first_date)
         
-        return has_appointments
+        return True
 
 # If this file is run directly, it can still function as a standalone script
 if __name__ == "__main__":
@@ -365,6 +364,7 @@ if __name__ == "__main__":
         
         # Override interval from command line if provided
         if args.interval:
+            print(f"Overriding check interval to {args.interval} seconds")
             config['check_interval'] = args.interval
         
         # Create checker instance
@@ -374,7 +374,8 @@ if __name__ == "__main__":
             config['schedule_id'],
             config['country_code'],
             config['visa_type'],
-            config['facility_id']
+            config['facility_id'],
+            config['check_interval']
         )
         
         if args.continuous:
