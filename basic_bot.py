@@ -23,6 +23,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Admin user configuration
+ADMIN_CHAT_ID = int(os.getenv('CHAT_ID', '434679558'))  # Read from .env, fallback to default
+logger.info(f"Admin user ID configured: {ADMIN_CHAT_ID}")
+
 # Global variables for tracking appointment status
 last_available_pool_date = None
 last_pool_check = None
@@ -77,6 +81,48 @@ async def send_loop_messages(bot, chat_id, user_id):
             chat_id=chat_id,
             text=f"An error occurred in the loop: {str(e)}"
         )
+
+# Helper function to limit the history size
+def limit_history_size(max_size=10):
+    """Limit the history of stored dates and times to a maximum size.
+    Keep only the earliest dates (closest to today) rather than recent additions."""
+    global list_of_dates, list_of_date_times
+    
+    # If we have more items than the max size, remove the furthest dates
+    if len(list_of_date_times) > max_size:
+        # Convert string dates to datetime objects and sort by proximity to today
+        today = datetime.datetime.now().date()
+        date_distances = []
+        
+        for date_str in list_of_date_times.keys():
+            try:
+                appointment_date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+                # Calculate days until appointment (negative means it's in the past)
+                days_until = (appointment_date - today).days
+                
+                # We only care about future appointments
+                if days_until >= 0:
+                    date_distances.append((date_str, days_until))
+            except Exception as e:
+                logger.error(f"Error processing date {date_str}: {e}")
+        
+        # Sort by days until appointment (closest first)
+        date_distances.sort(key=lambda x: x[1])
+        
+        # Get all dates to keep (earliest max_size dates)
+        dates_to_keep = [date_info[0] for date_info in date_distances[:max_size]]
+        
+        # Determine which dates to remove (any not in the keep list)
+        dates_to_remove = [date for date in list_of_date_times.keys() if date not in dates_to_keep]
+        
+        # Remove excess dates
+        for date in dates_to_remove:
+            del list_of_date_times[date]
+        
+        # Rebuild list_of_dates from the remaining dates in list_of_date_times
+        list_of_dates = set(list_of_date_times.keys())
+        
+        logger.info(f"History limited to {max_size} items. Kept earliest future dates, removed {len(dates_to_remove)} farther dates.")
 
 # Function to check visa appointments regularly
 async def check_visa_appointments(bot, user_id, interval=300):
@@ -151,6 +197,7 @@ async def check_visa_appointments(bot, user_id, interval=300):
             last_pool_check = datetime.datetime.now()
             logger.info(f"Updated last_pool_check to {last_pool_check}")
             
+            # add case when appointment is available in 180 days
             # Case 1: New appointments became available (none were available before)
             if current_earliest_date and last_available_date is None:
                 # Prepare a single consolidated notification
@@ -168,7 +215,7 @@ async def check_visa_appointments(bot, user_id, interval=300):
                     notification_parts.append(f"⏳ Days until appointment: {days_until}")
                     
                     if appointment_date < future_date:
-                        notification_parts.append("🚨 URGENT: Appointment available within next 6 months! 🚨")
+                        notification_parts.append("🚨🚨🚨🚨🚨 URGENT: Less than 6 months! 🚨🚨🚨🚨🚨")
                 except Exception as e:
                     logger.error(f"Error comparing dates: {e}")
                 
@@ -184,6 +231,8 @@ async def check_visa_appointments(bot, user_id, interval=300):
                     # Only store the date-time pair if we haven't stored it before
                     if first_date not in list_of_date_times and times:
                         list_of_date_times[first_date] = times
+                        # Limit the history size to 10 items
+                        limit_history_size(10)
                     
                     # Add time slot info to notification
                     time_info = f"Available time slots: {len(times)}" if times else "No specific times available"
@@ -206,7 +255,7 @@ async def check_visa_appointments(bot, user_id, interval=300):
                     if current_date < last_date:
                         # Prepare a single consolidated notification for earlier appointment
                         notification_parts = [
-                            "🔔 EARLIER APPOINTMENT AVAILABLE! 🔔",
+                            "🔔🔔🔔 EARLIER APPOINTMENT AVAILABLE! 🔔🔔🔔",
                             f"📅 New earliest date: {current_earliest_date}",
                             f"📆 Previous earliest date: {last_available_date}"
                         ]
@@ -230,6 +279,8 @@ async def check_visa_appointments(bot, user_id, interval=300):
                             list_of_dates.add(first_date)
                             if first_date not in list_of_date_times and times:
                                 list_of_date_times[first_date] = times
+                                # Limit the history size to 10 items
+                                limit_history_size(10)
                                 
                             # Add time slot info
                             time_info = f"Available time slots: {len(times)}" if times else "No specific times available"
@@ -242,6 +293,7 @@ async def check_visa_appointments(bot, user_id, interval=300):
                         await send_to_all_subscribers(bot, "\n\n".join(notification_parts))
                 except Exception as e:
                     logger.error(f"Error comparing appointment dates: {e}")
+            
             
             # Case 3: Appointments were available but aren't anymore
             elif not current_earliest_date and last_available_date:
@@ -335,7 +387,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"You have been subscribed to visa appointment notifications.\n"
         f"Current subscribers: {len(subscribed_users)}/{MAX_SUBSCRIBERS}\n"
-        f"Use /startvisa to begin visa checks or /unsubscribe to unsubscribe."
+        f"Use /start_visa to begin visa checks or /unsubscribe to unsubscribe."
     )
     
     # Send the interactive menu
@@ -346,31 +398,37 @@ async def send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send the interactive menu."""
     user_id = update.effective_user.id
     is_subscribed = user_id in subscribed_users
+    is_user_admin = is_admin(user_id)
     
     keyboard = [
-        [InlineKeyboardButton("Start Loop Messages", callback_data="start_loop")],
         [InlineKeyboardButton("Start Visa Checks", callback_data="start_visa")],
         [InlineKeyboardButton("Stop Visa Checks", callback_data="stop_visa")],
         [InlineKeyboardButton("Check Status", callback_data="status")],
-        [InlineKeyboardButton("Last Check Result", callback_data="last_pool_check")]
+        [InlineKeyboardButton("Last Check Result", callback_data="last_pool")]
     ]
     
     # Add subscription management buttons
     if is_subscribed:
         keyboard.append([InlineKeyboardButton("Unsubscribe", callback_data="unsubscribe")])
     else:
-        keyboard.append([InlineKeyboardButton("Subscribe", callback_data="subscribe")])
+        keyboard.append([InlineKeyboardButton("Start", callback_data="start")])
     
-    # Add admin button if there are any subscribers
-    if len(subscribed_users) > 0:
+    # Add admin buttons if the user is an admin
+    if is_user_admin:
         keyboard.append([InlineKeyboardButton("View All Subscribers", callback_data="list_subscribers")])
+        # Add other admin buttons here if needed
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     subscription_status = f"✅ Subscribed ({len(subscribed_users)}/{MAX_SUBSCRIBERS} total users)" if is_subscribed else "❌ Not subscribed"
+    admin_status = "👑 Admin Access" if is_user_admin else ""
+    
+    menu_text = f'Choose an option:\nYour subscription status: {subscription_status}'
+    if admin_status:
+        menu_text += f'\n{admin_status}'
     
     await update.message.reply_text(
-        f'Choose an option:\nYour subscription status: {subscription_status}',
+        menu_text,
         reply_markup=reply_markup
     )
 
@@ -402,7 +460,7 @@ async def start_visa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f'Starting visa appointment checks every {interval} seconds.\n'
         f'Notifications will be sent to {len(subscribed_users)} subscribed users.\n'
-        f'Send /stopvisa to stop the checks.'
+        f'Send /stop_visa to stop the checks.'
     )
 
 # Update button callback function for the new structure
@@ -416,19 +474,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
-    if query.data == "start_loop":
-        # Cancel any existing loop for this user
-        if user_id in active_loops:
-            active_loops[user_id].cancel()
-            await query.edit_message_text('Stopping previous loop and starting a new one...')
-        
-        # Start a background task for this user
-        task = asyncio.create_task(send_loop_messages(context.bot, chat_id, user_id))
-        active_loops[user_id] = task
-        
-        await query.edit_message_text('Starting loop messages every 3 seconds. Send /stop to stop the loop.')
-    
-    elif query.data == "start_visa":
+    if query.data == "start_visa":
         # Check if the user is subscribed
         if user_id not in subscribed_users:
             await query.edit_message_text(
@@ -452,7 +498,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f'Starting visa appointment checks every {interval} seconds.\n'
             f'Notifications will be sent to {len(subscribed_users)} subscribed users.\n'
-            f'Send /stopvisa to stop the checks.'
+            f'Send /stop_visa to stop the checks.'
         )
     
     elif query.data == "stop_visa":
@@ -466,12 +512,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "status":
         # Create status message
         status_message = []
-        
-        if user_id in active_loops:
-            status_message.append("✅ Loop messages: Active")
-        else:
-            status_message.append("❌ Loop messages: Inactive")
-        
+     
         if user_id in active_visa_checks:
             status_message.append("✅ Visa checks: Active")
         else:
@@ -499,7 +540,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text("\n".join(status_message))
     
-    elif query.data == "last_pool_check":
+    elif query.data == "last_pool":
         # Create message with dates and times from list_of_date_times dictionary
         if last_pool_check:
             message = f"Last pool check: {last_pool_check.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
@@ -548,7 +589,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     
     elif query.data == "list_subscribers":
-        # Add an admin check here if needed
+        # Check if the user is an admin
+        if not is_admin(user_id):
+            await query.edit_message_text(
+                "⛔ Access denied: This function is only available to administrators."
+            )
+            return
         
         if not subscribed_users:
             await query.edit_message_text("No users are currently subscribed.")
@@ -556,8 +602,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         message = [f"Current subscribers ({len(subscribed_users)}/{MAX_SUBSCRIBERS}):"]
         
-        for i, (user_id, chat_id) in enumerate(subscribed_users.items(), 1):
-            message.append(f"{i}. User ID: {user_id}, Chat ID: {chat_id}")
+        for i, (subscriber_id, chat_id) in enumerate(subscribed_users.items(), 1):
+            message.append(f"{i}. User ID: {subscriber_id}, Chat ID: {chat_id}")
         
         await query.edit_message_text("\n".join(message))
     
@@ -580,30 +626,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"✅ You have been subscribed to visa appointment notifications.\n"
             f"Current subscribers: {len(subscribed_users)}/{MAX_SUBSCRIBERS}\n"
-            f"Use /startvisa to begin visa checks or /unsubscribe to unsubscribe."
+            f"Use /start_visa to begin visa checks or /unsubscribe to unsubscribe."
         )
     
     else:
         await query.edit_message_text(f'Command not found: {query.data}')
-
-# Define a stop command to halt the loop
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Stop the loop messages."""
-    user_id = update.effective_user.id
-    
-    if user_id in active_loops:
-        # Get the task
-        task = active_loops[user_id]
-        
-        # Cancel the task
-        task.cancel()
-        
-        # Remove from active loops
-        del active_loops[user_id]
-        
-        await update.message.reply_text('Stopping the loop messages.')
-    else:
-        await update.message.reply_text('No active loop to stop.')
 
 # Define a stop command to halt the visa checks
 async def stop_visa(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -627,6 +654,8 @@ async def stop_visa(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Define a status command to check current status
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show current status of all checks."""
+    global last_available_pool_date, last_pool_check, list_of_date_times
+    
     user_id = update.effective_user.id
     
     status_message = []
@@ -638,12 +667,6 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_message.append("❌ Subscription: Not subscribed")
         status_message.append("Use /start to subscribe for notifications.")
     
-    # Check active services
-    if user_id in active_loops:
-        status_message.append("✅ Loop messages: Active")
-    else:
-        status_message.append("❌ Loop messages: Inactive")
-    
     if user_id in active_visa_checks:
         status_message.append("✅ Visa checks: Active")
     else:
@@ -653,14 +676,42 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if last_pool_check:
         status_message.append(f"\nLast check: {last_pool_check.strftime('%Y-%m-%d %H:%M:%S')}")
         if last_available_pool_date:
-            status_message.append(f"Earliest available date: {last_available_pool_date}")
+            # Calculate how many days away the appointment is
+            try:
+                appointment_date = datetime.datetime.strptime(last_available_pool_date, '%Y-%m-%d')
+                today = datetime.datetime.now()
+                days_away = (appointment_date - today).days
+                
+                status_message.append(f"📅 Earliest available date: {last_available_pool_date} ({days_away} days from today)")
+            except Exception as e:
+                status_message.append(f"📅 Earliest available date: {last_available_pool_date}")
+                logger.error(f"Error calculating days difference: {e}")
+                
+            # Add time slot statistics
+            if list_of_date_times:
+                status_message.append("\n🗓️ Available dates and time slots:")
+                total_time_slots = 0
+                
+                # Sort dates chronologically
+                sorted_dates = sorted(list_of_date_times.keys())
+                
+                for date in sorted_dates[:3]:  # Show up to 3 dates
+                    times = list_of_date_times[date]
+                    total_time_slots += len(times)
+                    status_message.append(f"  • {date}: {len(times)} time slots")
+                
+                if len(sorted_dates) > 3:
+                    status_message.append(f"  • ... and {len(sorted_dates) - 3} more dates")
+                
+                status_message.append(f"📊 Total available dates: {len(list_of_date_times)}")
+                status_message.append(f"📊 Total available time slots: {total_time_slots}")
         else:
-            status_message.append("No available appointments found.")
+            status_message.append("❌ No available appointments found.")
     else:
-        status_message.append("\nNo checks performed yet.")
+        status_message.append("\n❓ No checks performed yet.")
     
     # Add subscriber count
-    status_message.append(f"\nTotal subscribers: {len(subscribed_users)}/{MAX_SUBSCRIBERS}")
+    status_message.append(f"\n👥 Total subscribers: {len(subscribed_users)}/{MAX_SUBSCRIBERS}")
     
     await update.message.reply_text("\n".join(status_message))
 
@@ -695,7 +746,14 @@ async def unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Define a command to list all current subscribers (for admin use)
 async def list_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List all current subscribers (admin only)."""
-    # Add an admin check here if needed
+    user_id = update.effective_user.id
+    
+    # Check if the user is an admin
+    if not is_admin(user_id):
+        await update.message.reply_text(
+            "⛔ Access denied: This function is only available to administrators."
+        )
+        return
     
     if not subscribed_users:
         await update.message.reply_text("No users are currently subscribed.")
@@ -703,8 +761,8 @@ async def list_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     message = [f"Current subscribers ({len(subscribed_users)}/{MAX_SUBSCRIBERS}):"]
     
-    for i, (user_id, chat_id) in enumerate(subscribed_users.items(), 1):
-        message.append(f"{i}. User ID: {user_id}, Chat ID: {chat_id}")
+    for i, (subscriber_id, chat_id) in enumerate(subscribed_users.items(), 1):
+        message.append(f"{i}. User ID: {subscriber_id}, Chat ID: {chat_id}")
     
     await update.message.reply_text("\n".join(message))
 
@@ -785,6 +843,43 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show the main menu."""
     await send_menu(update, context)
 
+# Helper function to check if a user is an admin
+def is_admin(user_id):
+    """Check if the user is an admin."""
+    return user_id == ADMIN_CHAT_ID
+
+#create callback for subscribe
+async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Subscribe the user to notifications."""
+    global subscribed_users
+    
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    # Check if the maximum number of subscribers has been reached
+    if user_id not in subscribed_users and len(subscribed_users) >= MAX_SUBSCRIBERS:
+        await update.message.reply_text(
+            f"Sorry, the maximum number of subscribers ({MAX_SUBSCRIBERS}) has been reached. "
+            f"Please try again later or contact the bot administrator."
+        )
+        return
+    
+    # Add or update the user's subscription
+    subscribed_users[user_id] = chat_id
+    
+    # Log the subscribed user
+    logger.info(f"User {user_id} (chat ID: {chat_id}) subscribed. Total subscribers: {len(subscribed_users)}")
+    
+    # Display subscription confirmation to the user
+    await update.message.reply_text(
+        f"✅ You have been subscribed to visa appointment notifications.\n"
+        f"Current subscribers: {len(subscribed_users)}/{MAX_SUBSCRIBERS}\n"
+        f"Use /start_visa to begin visa checks or /unsubscribe to unsubscribe."
+    )
+    
+    # Send the last
+    await last_pool(update, context)
+
 # Update main function to register the new command
 def main():
     # Get the bot token from environment variables
@@ -815,16 +910,14 @@ def main():
         
         # Add command handlers
         application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("startvisa", start_visa))
-        application.add_handler(CommandHandler("stop", stop))
-        application.add_handler(CommandHandler("stopvisa", stop_visa))
-        application.add_handler(CommandHandler("status", status))
-        application.add_handler(CommandHandler("lastpool", last_pool))
         application.add_handler(CommandHandler("menu", menu))
+        application.add_handler(CommandHandler("start_visa", start_visa))
+        application.add_handler(CommandHandler("stop_visa", stop_visa))
+        application.add_handler(CommandHandler("last_pool", last_pool))
         application.add_handler(CommandHandler("unsubscribe", unsubscribe))
-        application.add_handler(CommandHandler("subscribe", start))
-        application.add_handler(CommandHandler("listsubscribers", list_subscribers))
-          # Alias for start command
+        application.add_handler(CommandHandler("subscribe", subscribe))
+        application.add_handler(CommandHandler("status", status))
+        application.add_handler(CommandHandler("list_subscribers", list_subscribers))
         application.add_handler(CallbackQueryHandler(button_callback))
         
         # Start the Bot
