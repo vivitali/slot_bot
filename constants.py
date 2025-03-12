@@ -10,6 +10,7 @@ DEFAULT_CHECK_INTERVAL = 700  # 10 minutes in seconds
 DEFAULT_EXCEPTION_TIME = 1800  # 30 minutes in seconds
 DEFAULT_COOLDOWN_TIME = 3600  # 60 minutes in seconds
 DEFAULT_STEP_TIME = 5  # time between steps
+MAX_SUBSCRIBERS = 3
 
 # Selectors
 REGEX_CONTINUE = "//a[contains(text(),'Continue')]"
