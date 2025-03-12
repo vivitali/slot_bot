@@ -14,7 +14,7 @@ def get_random_interval(max_interval: int) -> int:
 
 from datetime import datetime
 
-def is_earlier_date(last_available_date, earlier_appointment):
+def is_earlier_date(last_available_date: str, earlier_appointment: str) -> bool:
     """
     Compare two dates and return True if last_available_date is earlier than earlier_appointment.
     

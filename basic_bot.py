@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import sys
@@ -5,7 +6,7 @@ import requests
 import asyncio
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
 # Import the VisaAppointmentChecker from the separate file
 from checker import VisaAppointmentChecker
@@ -22,11 +23,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global variables for tracking appointment status
+last_available_pool_date = None
+last_pool_check = None
+list_of_dates = set()
+list_of_date_times = map()
+
 # Dictionary to track active loop tasks
 active_loops = {}
 
 # Dictionary to track active visa check tasks
 active_visa_checks = {}
+
+# Global variable to store chat ID
+stored_chat_id = None
 
 # Function to send messages in a loop
 async def send_loop_messages(bot, chat_id, user_id):
@@ -58,6 +68,8 @@ async def send_loop_messages(bot, chat_id, user_id):
 # Function to check visa appointments regularly
 async def check_visa_appointments(bot, chat_id, user_id, interval=300):
     """Check for visa appointments at regular intervals."""
+    global last_available_pool_date, last_pool_check, list_of_dates, list_of_date_times  # Explicitly declare globals
+    
     try:
         # Get visa appointment configuration from environment variables
         email = os.getenv('VISA_EMAIL')
@@ -108,37 +120,73 @@ async def check_visa_appointments(bot, chat_id, user_id, interval=300):
             
             # Check for appointments
             dates = checker.get_available_dates()
-            earlier_appointment = dates[0].get('date')
+
+            # Store the earliest available date and time of check in global variables
+            if dates and len(dates) > 0:
+                last_available_pool_date = dates[0].get('date')
+                logger.info(f"Found available date: {last_available_pool_date}")
+            else:
+                last_available_pool_date = None
+                logger.info("No available dates found")
+                
+            last_pool_check = datetime.datetime.now()
+            logger.info(f"Updated last_pool_check to {last_pool_check}")
             
+            # Get earliest appointment date for comparison
+            earlier_appointment = dates[0].get('date') if dates and len(dates) > 0 else None
+
             # If appointments became available and weren't before, send notification
-            if not last_available_date or is_earlier_date(last_available_date, earlier_appointment):
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="🔔 VISA APPOINTMENTS AVAILABLE! 🔔\nCheck the system now to book your appointment!"
-                )
+            if dates and (not last_available_date or (last_available_date != earlier_appointment)):
+                annual_date = datetime.datetime.now() + datetime.timedelta(days=365)
+                iso_string = annual_date.strftime("%Y-%m-%d")
+                if is_earlier_date(last_available_pool_date, iso_string):
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="🔔 NEW VISA APPOINTMENTS AVAILABLE! 🔔\nCheck the system now to book your appointment!"
+                    )
+
+                # add extra check to see if the appointment is 6 months from now second arg should be in iso format
+                future_date = datetime.datetime.now() + datetime.timedelta(days=180)
+                iso_string = future_date.strftime("%Y-%m-%d")
+                if is_earlier_date(last_available_pool_date, iso_string):
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="🔔 🔔 🔔 🔔 🔔 🔔 🔔 6 MONTHS FROM NOW 🔔 🔔 🔔 🔔 🔔 🔔 🔔 "
+                    )
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="🔔 🔔 🔔 🔔 🔔 🔔 🔔 "
+                    )
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="🔔 🔔 🔔 🔔 🔔 🔔 🔔 "
+                    )
                 
                 # If facility ID is provided, get and send available dates
                 if dates:
-                    date_info = []
-                    for date in dates[:5]:  # Get first 5 dates
-                        date_info.append(f"{date.get('date')} - Business day: {date.get('business_day')}")
-                    
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=f"Available dates:\n" + "\n".join(date_info)
-                    )
+                    # date_info = []
+                    # for date in dates[:1]:  # Get first 5 dates
+                    #     date_info.append(f"{date.get('date')} - Business day: }")
+
+                    # await bot.send_message(
+                    #     chat_id=chat_id,
+                    #     text=f"Available dates:\n" + "\n".join(date_info)
+                    # )
                     
                     # Get times for the first available date
                     first_date = dates[0].get('date')
+                    list_of_dates.add(first_date)
                     times = checker.get_available_times(first_date)
                     if times:
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=f"Available times for {first_date}:\n" + "\n".join(times[:5])
-                        )
+                        if first_date not in list_of_dates:
+                            list_of_date_times.append(first_date, times)
+                            # await bot.send_message(
+                            #     chat_id=chat_id,
+                            #     text=f"Available times for {first_date}:\n" + "\n".join(times[:5])
+                            # )
             
             # If appointments were available but aren't anymore, send notification
-            elif not earlier_appointment == last_available_date and last_available_date:
+            elif not earlier_appointment and last_available_date:
                 await bot.send_message(
                     chat_id=chat_id,
                     text="Visa appointments are no longer available."
@@ -149,7 +197,7 @@ async def check_visa_appointments(bot, chat_id, user_id, interval=300):
             
             # Check status
             if counter % 10 == 0:
-                status = "Available #{earlier_appointment}" if earlier_appointment else "Not available"
+                status = f"Available: {earlier_appointment}" if earlier_appointment else "Not available"
                 await bot.send_message(
                     chat_id=chat_id,
                     text=f"Status update (check #{counter}): Visa appointments: {status}"
@@ -158,7 +206,12 @@ async def check_visa_appointments(bot, chat_id, user_id, interval=300):
             counter += 1
             
             # Wait for the specified interval
-            await asyncio.sleep(interval)
+            random_interval = get_random_interval(interval)
+
+            logger.info(f"next check in {random_interval} seconds")
+            # prin in green color
+            print(f"\033[32mnext check in {random_interval} seconds\033[0m")
+            await asyncio.sleep(random_interval)
     except asyncio.CancelledError:
         # Task was cancelled, clean exit
         await bot.send_message(
@@ -171,9 +224,6 @@ async def check_visa_appointments(bot, chat_id, user_id, interval=300):
             chat_id=chat_id,
             text=f"An error occurred while checking visa appointments: {str(e)}"
         )
-
-# Global variable to store chat ID
-stored_chat_id = None
 
 # Define the start command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -193,9 +243,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Your chat ID ({chat_id}) has been stored. Use /startvisa to begin visa checks.")
     
     # Regular start command menu
+    await send_menu(update, context)
+
+# Helper function to send the menu
+async def send_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send the interactive menu."""
     keyboard = [
         [InlineKeyboardButton("Start Loop Messages", callback_data="start_loop")],
-        [InlineKeyboardButton("Start Visa Checks", callback_data="start_visa")]
+        [InlineKeyboardButton("Start Visa Checks", callback_data="start_visa")],
+        [InlineKeyboardButton("Stop Visa Checks", callback_data="stop_visa")],
+        [InlineKeyboardButton("Status", callback_data="status")],
+        [InlineKeyboardButton("Last Pool Check", callback_data="last_pool_check")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -267,16 +325,61 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_visa_checks[user_id].cancel()
             await query.edit_message_text('Stopping previous visa check and starting a new one...')
         
+        # Parse interval
+        interval = get_random_interval(DEFAULT_CHECK_INTERVAL)
+        
         # Start a background task for this user
-        task = asyncio.create_task(check_visa_appointments(context.bot, stored_chat_id, user_id))
+        task = asyncio.create_task(check_visa_appointments(context.bot, stored_chat_id, user_id, interval))
         active_visa_checks[user_id] = task
         
         await query.edit_message_text(
-            f'Starting visa appointment checks.\n'
+            f'Starting visa appointment checks every {interval} seconds.\n'
             f'Using chat ID: {stored_chat_id}\n'
             f'Send /stopvisa to stop the checks.'
         )
-
+    
+    elif query.data == "stop_visa":
+        if user_id in active_visa_checks:
+            active_visa_checks[user_id].cancel()
+            del active_visa_checks[user_id]
+            await query.edit_message_text('Visa checks stopped.')
+        else:
+            await query.edit_message_text('No active visa checks to stop.')
+    
+    elif query.data == "status":
+        # Create status message
+        status_message = []
+        
+        if user_id in active_loops:
+            status_message.append("✅ Loop messages: Active")
+        else:
+            status_message.append("❌ Loop messages: Inactive")
+        
+        if user_id in active_visa_checks:
+            status_message.append("✅ Visa checks: Active")
+        else:
+            status_message.append("❌ Visa checks: Inactive")
+        
+        await query.edit_message_text("\n".join(status_message))
+    
+    elif query.data == "last_pool_check":
+        global last_available_pool_date, last_pool_check, list_of_dates, list_of_date_times
+        # create message with dates and times of list_of_date_times
+        message = f"Last pool check: {last_pool_check.strftime('%Y-%m-%d %H:%M:%S')}"
+        for date, times in list_of_date_times:
+            message += f"{date}: {times}\n"
+        if last_pool_check:
+            if last_available_pool_date:
+                message += f"\nEarliest available date: {last_available_pool_date}"
+            else:
+                message += "\nNo available appointments found."
+        else:
+            message = "No pool checks have been performed yet."
+        
+        await query.edit_message_text(message)
+    
+    else:
+        await query.edit_message_text(f'Command not found: {query.data}')
 
 # Define a stop command to halt the loop
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -333,6 +436,16 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         status_message.append("❌ Visa checks: Inactive")
     
+    # Add last pool check information
+    if last_pool_check:
+        status_message.append(f"\nLast check: {last_pool_check.strftime('%Y-%m-%d %H:%M:%S')}")
+        if last_available_pool_date:
+            status_message.append(f"Earliest available date: {last_available_pool_date}")
+        else:
+            status_message.append("No available appointments found.")
+    else:
+        status_message.append("\nNo checks performed yet.")
+    
     await update.message.reply_text("\n".join(status_message))
 
 def check_token_validity(token):
@@ -363,6 +476,25 @@ def check_internet_connection():
     except Exception as e:
         logger.error(f"Internet connection check error: {str(e)}")
         return False
+    
+async def last_pool(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the last pool check date and time."""
+    global last_available_pool_date, last_pool_check
+    
+    if last_pool_check:
+        message = f"Last pool check: {last_pool_check.strftime('%Y-%m-%d %H:%M:%S')}"
+        if last_available_pool_date:
+            message += f"\nEarliest available date: {last_available_pool_date}"
+        else:
+            message += "\nNo available appointments found."
+    else:
+        message = "No pool checks have been performed yet."
+    
+    await update.message.reply_text(message)
+
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the main menu."""
+    await send_menu(update, context)
 
 # Update main function to register the new command
 def main():
@@ -394,10 +526,12 @@ def main():
         
         # Add command handlers
         application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("start_visa", start_visa))  # New command
+        application.add_handler(CommandHandler("start_visa", start_visa))  # Fixed command
         application.add_handler(CommandHandler("stop", stop))
-        application.add_handler(CommandHandler("stop_visa", stop_visa))
+        application.add_handler(CommandHandler("stop_visa", stop_visa))    # Fixed command
         application.add_handler(CommandHandler("status", status))
+        application.add_handler(CommandHandler("last_pool", last_pool))
+        application.add_handler(CommandHandler("menu", menu))
         application.add_handler(CallbackQueryHandler(button_callback))
         
         # Start the Bot
@@ -407,7 +541,6 @@ def main():
         logger.error(f"Failed to start the bot: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
-        
 
 if __name__ == '__main__':
     main()
