@@ -48,18 +48,36 @@ checker_last_created = 0
 checker_instance = None
 
 # Helper function to send messages to all subscribers
-async def send_to_all_subscribers(bot, message):
+async def send_to_all_subscribers(bot, message, is_urgent=False):
     """Send a message to all subscribed users."""
-    for user_id, chat_id in subscribed_users.items():
-        try:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=message
-            )
-            logger.info(f"Notification sent to user {user_id} (chat ID: {chat_id})")
+        for user_id, chat_id in subscribed_users.items():
+            try:
+                # Check if this is an urgent notification (< 360 days)
+                if is_urgent:
+                    # Split into multiple messages to create multiple notifications
+                    await bot.send_message(chat_id=chat_id, text="🚨 ТЕРМІНОВО! ДОСТУПНИЙ ЗАПИС! 🚨")
+                    await asyncio.sleep(0.5)  # Small delay between messages
+                    await bot.send_message(chat_id=chat_id, text=message)\             
+                    await asyncio.sleep(0.5)  # Small delay between messages
+                    await bot.send_message(chat_id=chat_id, text="💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡")
+                    await asyncio.sleep(1)  # Small delay between messages
+                    await bot.send_message(chat_id=chat_id, text="💎💎💎💎💎 ТЕРМІНОВО! ДОСТУПНИЙ ЗАПИС! 💎💎💎💎💎")
+                    await asyncio.sleep(1.5)  # Small delay between messages\
+                    await bot.send_message(chat_id=chat_id, text="🪪🪪🪪🪪🪪🪪 ТЕРМІНОВО! ДОСТУПНИЙ ЗАПИС! 🪪🪪🪪🪪🪪🪪")
+                    await asyncio.sleep(1.5)  # Small delay between messages\
+                    await bot.send_message(chat_id=chat_id, text="🚨 ТЕРМІНОВО! ДОСТУПНИЙ ЗАПИС менше 1 року! 🚨")
+
+                else:
+                    # Regular notification (potentially silent)
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        disable_notification=True  # Optional: make regular updates silent
+                )
+            
+                logger.info(f"Message sent to user {user_id}, chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send message to user {user_id}: {str(e)}")
-
 # Get a fresh checker instance or reuse an existing one if it's not expired
 def get_checker_instance():
     """Get a checker instance, creating a new one if necessary based on cache expiry."""
@@ -195,6 +213,7 @@ async def global_visa_check(bot, interval=300):
                 
                 # Case 1: New appointments became available (none were available before)
                 if current_earliest_date and last_available_date is None:
+                    is_urgent = False
                     # Prepare notification
                     notification_parts = [
                         "🔔 NEW VISA APPOINTMENTS AVAILABLE! 🔔",
@@ -204,12 +223,19 @@ async def global_visa_check(bot, interval=300):
                     # Add additional information
                     try:
                         appointment_date = datetime.datetime.strptime(current_earliest_date, '%Y-%m-%d')
+                        six_months = datetime.datetime.now() + datetime.timedelta(days=180)
+                        year = datetime.datetime.now() + datetime.timedelta(days=301)
                         future_date = datetime.datetime.now() + datetime.timedelta(days=180)
                         days_until = (appointment_date - datetime.datetime.now()).days
                         
                         notification_parts.append(f"⏳ Days until appointment: {days_until}")
                         
-                        if appointment_date < future_date:
+                        # can it be made different notification for less than 6 months?
+                        if appointment_date < year:
+                            is_urgent = True
+                            notification_parts.append("🚨🚨🚨🚨🚨 URGENT: Less than 300 days! 🚨🚨🚨🚨🚨")
+                        # Check if the appointment date is less than 6 months from now
+                        if appointment_date < six_months:
                             notification_parts.append("🚨🚨🚨🚨🚨 URGENT: Less than 6 months! 🚨🚨🚨🚨🚨")
                     except Exception as e:
                         logger.error(f"Error comparing dates: {e}")
@@ -223,7 +249,7 @@ async def global_visa_check(bot, interval=300):
                     notification_parts.append("\nPlease check the system now to book your appointment!")
                     
                     # Send to all subscribers
-                    await send_to_all_subscribers(bot, "\n\n".join(notification_parts))
+                    await send_to_all_subscribers(bot, "\n\n".join(notification_parts), is_urgent)
                 
                 # Case 2: Earlier appointment became available
                 elif current_earliest_date and last_available_date:
