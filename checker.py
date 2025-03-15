@@ -5,6 +5,8 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
+from constants import DEFAULT_CHECK_INTERVAL
+
 from utils import get_random_interval
 
 # Set up logging
@@ -339,7 +341,7 @@ if __name__ == "__main__":
             'country_code': os.getenv('COUNTRY_CODE', 'en-ca'),
             'visa_type': os.getenv('VISA_TYPE', 'niv'),
             'facility_id': os.getenv('FACILITY_ID'),
-            'check_interval': get_random_interval(int(os.getenv('CHECK_INTERVAL', '300'))),
+            'check_interval': get_random_interval(int(os.getenv('CHECK_INTERVAL', DEFAULT_CHECK_INTERVAL))),
         }
         
         print(f"Configuration loaded successfully:")
