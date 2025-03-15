@@ -26,8 +26,8 @@ def is_earlier_date(last_available_date, earlier_appointment):
         bool: True if last_available_date is earlier than earlier_appointment, False otherwise
     """
     # Convert string dates to datetime objects for comparison
-    last_date = datetime.strptime(last_available_date, '%Y-%m-%d')
-    earlier_date = datetime.strptime(earlier_appointment, '%Y-%m-%d')
+    last_date = datetime.strptime(last_available_date, '%Y %b %d')
+    earlier_date = datetime.strptime(earlier_appointment, '%Y %b %d')
     
     # Compare dates
     return last_date < earlier_date

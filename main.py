@@ -223,10 +223,9 @@ async def global_visa_check(bot, interval=300):
                     
                     # Add additional information
                     try:
-                        appointment_date = datetime.datetime.strptime(current_earliest_date, '%Y-%m-%d')
+                        appointment_date = datetime.datetime.strptime(current_earliest_date, '%Y %b %d')
                         six_months = datetime.datetime.now() + datetime.timedelta(days=180)
                         year = datetime.datetime.now() + datetime.timedelta(days=301)
-                        future_date = datetime.datetime.now() + datetime.timedelta(days=180)
                         days_until = (appointment_date - datetime.datetime.now()).days
                         
                         notification_parts.append(f"⏳ Days until appointment: {days_until}")
@@ -256,8 +255,8 @@ async def global_visa_check(bot, interval=300):
                 elif current_earliest_date and last_available_date:
                     # Compare dates
                     try:
-                        current_date = datetime.datetime.strptime(current_earliest_date, '%Y-%m-%d')
-                        last_date = datetime.datetime.strptime(last_available_date, '%Y-%m-%d')
+                        current_date = datetime.datetime.strptime(current_earliest_date, '%Y %b %d')
+                        last_date = datetime.datetime.strptime(last_available_date, '%Y %b %d')
                         
                         if current_date < last_date:
                             # Prepare notification
@@ -313,7 +312,7 @@ async def global_visa_check(bot, interval=300):
                         status_message.append(f"✅ Appointments available! Earliest: {current_earliest_date}")
                         
                         # Calculate days difference
-                        appointment_date = datetime.datetime.strptime(current_earliest_date, '%Y-%m-%d')
+                        appointment_date = datetime.datetime.strptime(current_earliest_date, '%Y %b %d')
                         today = datetime.datetime.now()
                         days_away = (appointment_date - today).days
                         
@@ -432,7 +431,7 @@ async def last_pool(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if appointment_data['last_available_date']:
             # Calculate how many days away the appointment is
             try:
-                appointment_date = datetime.datetime.strptime(appointment_data['last_available_date'], '%Y-%m-%d')
+                appointment_date = datetime.datetime.strptime(appointment_data['last_available_date'], '%Y %b %d')
                 today = datetime.datetime.now()
                 days_away = (appointment_date - today).days
                 
@@ -454,7 +453,7 @@ async def last_pool(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Try to calculate days until appointment
                 try:
-                    appointment_date = datetime.datetime.strptime(date, '%Y-%m-%d')
+                    appointment_date = datetime.datetime.strptime(date, '%Y %b %d')
                     today = datetime.datetime.now()
                     days_away = (appointment_date - today).days
                     message.append(f"  {i}. 📆 {date} ({days_away} days) - {len(times)} time slots")
