@@ -1,0 +1,64 @@
+name: Deploy to Cloud Run
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types:
+      - completed
+  workflow_dispatch:  # Allow manual triggering
+
+env:
+  PROJECT_ID: ${{ secrets.PROJECT_ID }}
+  REGION: us-central1  # Change this to your preferred GCP region
+  SERVICE_NAME: visa-appointment-bot
+
+jobs:
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    # Only run if the build workflow was successful
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        project_id: ${{ env.PROJECT_ID }}
+        
+    - name: Get latest image URI
+      id: get-image
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          IMAGE_URI="gcr.io/$PROJECT_ID/visa-appointment-bot:latest"
+        else
+          # Get the latest image from GCR
+          IMAGE_URI="gcr.io/$PROJECT_ID/visa-appointment-bot:latest"
+        fi
+        echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_OUTPUT
+        
+    - name: Deploy to Cloud Run
+      id: deploy
+      uses: google-github-actions/deploy-cloudrun@v1
+      with:
+        service: ${{ env.SERVICE_NAME }}
+        image: ${{ steps.get-image.outputs.IMAGE_URI }}
+        region: ${{ env.REGION }}
+        env_vars: |
+          TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}
+          VISA_EMAIL=${{ secrets.VISA_EMAIL }}
+          VISA_PASSWORD=${{ secrets.VISA_PASSWORD }}
+          SCHEDULE_ID=${{ secrets.SCHEDULE_ID }}
+          COUNTRY_CODE=${{ secrets.COUNTRY_CODE }}
+          VISA_TYPE=${{ secrets.VISA_TYPE }}
+          FACILITY_ID=${{ secrets.FACILITY_ID }}
+          CHECK_INTERVAL=${{ secrets.CHECK_INTERVAL }}
+          MAX_SUBSCRIBERS=${{ secrets.MAX_SUBSCRIBERS }}
+          CHAT_ID=${{ secrets.CHAT_ID }}
+          
+    - name: Service URL
+      run: |
+        echo "Service URL: ${{ steps.deploy.outputs.url }}"
