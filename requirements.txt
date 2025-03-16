@@ -14,5 +14,6 @@ python-dotenv==1.0.1
 Flask==2.3.3
 
 # Additional requirements
-logging==0.4.9.6
+
+# Note: Don't use logging package - it's a built-in Python module
 aiohttp==3.9.3
