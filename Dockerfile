@@ -20,6 +20,10 @@ ENV FACILITY_ID=""
 ENV CHECK_INTERVAL="600"
 ENV MAX_SUBSCRIBERS="4"
 ENV CHAT_ID=""
+ENV PORT="8080"
 
-# Run the bot
-CMD ["python", "main.py"]
+# Expose the port that Cloud Run expects
+EXPOSE 8080
+
+# Run the Cloud Run compatible version
+CMD ["python", "main_cloud_run.py"]

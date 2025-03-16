@@ -5,6 +5,8 @@ import sys
 import requests
 import asyncio
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
@@ -14,15 +16,40 @@ from checker import VisaAppointmentChecker
 from constants import DEFAULT_CHECK_INTERVAL, MAX_SUBSCRIBERS
 from utils import get_random_interval, is_earlier_date
 
-# Load environment variables
-load_dotenv()
-
 # Set up logging with more details
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Create a simple health check HTTP server for Cloud Run
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK')
+        else:
+            self.send_response(404)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+    
+    def log_message(self, format, *args):
+        logger.info(f"Health check: {args[0]} {args[1]} {args[2]}")
+
+def start_health_server():
+    # Get port from environment variable or default to 8080
+    port = int(os.environ.get('PORT', 8080))
+    server_address = ('', port)
+    httpd = HTTPServer(server_address, HealthCheckHandler)
+    logger.info(f'Starting health check server on port {port}')
+    httpd.serve_forever()
+
+# Start the rest of your bot code (same as before)
+# -- The rest of your bot code goes here --
 
 # Admin user configuration
 ADMIN_CHAT_ID = int(os.getenv('CHAT_ID', '434679558'))  # Read from .env, fallback to default
@@ -488,6 +515,9 @@ async def last_pool(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Start the bot."""
+    # Load environment variables
+    load_dotenv()
+    
     # Get the bot token
     bot_token = os.getenv('TELEGRAM_TOKEN')
     
@@ -496,6 +526,11 @@ def main():
         sys.exit(1)
     
     try:
+        # Start health check server in a separate thread for Cloud Run
+        http_thread = threading.Thread(target=start_health_server, daemon=True)
+        http_thread.start()
+        logger.info("Health check server started in background thread")
+        
         # Create the application
         application_builder = ApplicationBuilder().token(bot_token)
         application = application_builder.build()
