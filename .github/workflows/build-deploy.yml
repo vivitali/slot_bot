@@ -6,7 +6,7 @@ on:
   workflow_dispatch:  # Allow manual triggering
 
 env:
-  PROJECT_ID: ${{ secrets.PROJECT_ID }}
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: us-central1  # Change this to your preferred GCP region
   SERVICE_NAME: visa-appointment-bot
 
@@ -25,21 +25,22 @@ jobs:
         service_account_key: ${{ secrets.GCP_SA_KEY }}
         project_id: ${{ env.PROJECT_ID }}
         
-    - name: Configure Docker for GCR
+    - name: Auth Docker for GCR
       run: |
-        gcloud auth configure-docker gcr.io
+        gcloud --quiet auth configure-docker gcr.io
+        gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://gcr.io
         
     - name: Build Docker image
       id: build-image
       run: |
-        docker build -t gcr.io/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }} .
-        docker tag gcr.io/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }} gcr.io/$PROJECT_ID/$SERVICE_NAME:latest
-        echo "IMAGE_URI=gcr.io/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }}" >> $GITHUB_OUTPUT
+        docker build -t gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
+        docker tag gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest
+        echo "IMAGE_URI=gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" >> $GITHUB_OUTPUT
         
     - name: Push Docker image to GCR
       run: |
-        docker push gcr.io/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }}
-        docker push gcr.io/$PROJECT_ID/$SERVICE_NAME:latest
+        docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+        docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:latest
         
     - name: Deploy to Cloud Run
       id: deploy
