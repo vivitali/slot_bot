@@ -9,6 +9,7 @@ on:
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   SERVICE_NAME: visa-appointment-bot
+  REGION: us-central1
 
 jobs:
   build-and-deploy:
@@ -35,36 +36,51 @@ jobs:
       with:
         credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-    # Build and deploy to Cloud Run (GCP)
-    - name: Set up Artifact Registry repository
-      run: |
-        gcloud artifacts repositories describe cloud-run-source-deploy \
-          --location=us-central1 \
-          --format="value(name)" || \
-        gcloud artifacts repositories create cloud-run-source-deploy \
-          --repository-format=docker \
-          --location=us-central1 \
-          --description="Docker repository for Cloud Run source deployments"
+    # Set up gcloud CLI
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
 
+    # Enable necessary APIs
+    - name: Enable APIs
+      run: |
+        gcloud services enable cloudbuild.googleapis.com
+        gcloud services enable run.googleapis.com
+        gcloud services enable containerregistry.googleapis.com
+
+    # Create .gcloudignore file to control what gets uploaded
+    - name: Create .gcloudignore
+      run: |
+        echo ".git
+        .github
+        .gitignore
+        __pycache__
+        *.pyc
+        .pytest_cache
+        .venv
+        venv
+        env
+        .env" > .gcloudignore
+
+    # Build and push to Container Registry directly
+    - name: Build and push Docker image
+      run: |
+        # Configure Docker to use gcloud as a credential helper
+        gcloud auth configure-docker
+        
+        # Build and push using Cloud Build
+        gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }}
+      
+    # Deploy the built container
     - name: Deploy to Cloud Run
-      id: deploy
-      uses: google-github-actions/deploy-cloudrun@v1
-      with:
-        service: visa-appointment-bot
-        region: us-central1
-        source: .
-        env_vars: |
-          TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }}
-          VISA_EMAIL=${{ secrets.VISA_EMAIL }}
-          VISA_PASSWORD=${{ secrets.VISA_PASSWORD }}
-          SCHEDULE_ID=${{ secrets.SCHEDULE_ID }}
-          COUNTRY_CODE=${{ secrets.COUNTRY_CODE }}
-          VISA_TYPE=${{ secrets.VISA_TYPE }}
-          FACILITY_ID=${{ secrets.FACILITY_ID }}
-          CHECK_INTERVAL=${{ secrets.CHECK_INTERVAL }}
-          MAX_SUBSCRIBERS=${{ secrets.MAX_SUBSCRIBERS }}
-          CHAT_ID=${{ secrets.CHAT_ID }}
-    - name: Notify deployment completion
-      if: success()
+      run: |
+        gcloud run deploy $SERVICE_NAME \
+          --image gcr.io/$PROJECT_ID/$SERVICE_NAME:${{ github.sha }} \
+          --platform managed \
+          --region $REGION \
+          --allow-unauthenticated \
+          --set-env-vars="TELEGRAM_TOKEN=${{ secrets.TELEGRAM_TOKEN }},VISA_EMAIL=${{ secrets.VISA_EMAIL }},VISA_PASSWORD=${{ secrets.VISA_PASSWORD }},SCHEDULE_ID=${{ secrets.SCHEDULE_ID }},COUNTRY_CODE=${{ secrets.COUNTRY_CODE }},VISA_TYPE=${{ secrets.VISA_TYPE }},FACILITY_ID=${{ secrets.FACILITY_ID }},CHECK_INTERVAL=${{ secrets.CHECK_INTERVAL }},MAX_SUBSCRIBERS=${{ secrets.MAX_SUBSCRIBERS }},CHAT_ID=${{ secrets.CHAT_ID }}"
+
+    - name: Show service URL
       run: |
         echo "Deployment completed successfully!"
+        echo "Service URL: $(gcloud run services describe $SERVICE_NAME --region $REGION --format='value(status.url)')"
