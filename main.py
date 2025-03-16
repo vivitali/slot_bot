@@ -6,7 +6,7 @@ import requests
 import asyncio
 import time
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from flask import Flask, request
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
@@ -16,40 +16,15 @@ from checker import VisaAppointmentChecker
 from constants import DEFAULT_CHECK_INTERVAL, MAX_SUBSCRIBERS
 from utils import get_random_interval, is_earlier_date
 
+# Load environment variables
+load_dotenv()
+
 # Set up logging with more details
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# Create a simple health check HTTP server for Cloud Run
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/health' or self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b'OK')
-        else:
-            self.send_response(404)
-            self.send_header('Content-Type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b'Not Found')
-    
-    def log_message(self, format, *args):
-        logger.info(f"Health check: {args[0]} {args[1]} {args[2]}")
-
-def start_health_server():
-    # Get port from environment variable or default to 8080
-    port = int(os.environ.get('PORT', 8080))
-    server_address = ('', port)
-    httpd = HTTPServer(server_address, HealthCheckHandler)
-    logger.info(f'Starting health check server on port {port}')
-    httpd.serve_forever()
-
-# Start the rest of your bot code (same as before)
-# -- The rest of your bot code goes here --
 
 # Admin user configuration
 ADMIN_CHAT_ID = int(os.getenv('CHAT_ID', '434679558'))  # Read from .env, fallback to default
@@ -74,6 +49,12 @@ CHECKER_CACHE_EXPIRY = 1800  # 30 minutes
 checker_last_created = 0
 checker_instance = None
 
+# Create Flask app for Cloud Run
+app = Flask(__name__)
+
+# Set up global application object
+telegram_app = None
+
 # Helper function to send messages to all subscribers
 async def send_to_all_subscribers(bot, message, is_urgent=False):
     """Send a message to all subscribed users."""
@@ -89,9 +70,9 @@ async def send_to_all_subscribers(bot, message, is_urgent=False):
                 await bot.send_message(chat_id=chat_id, text="💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡💡")
                 await asyncio.sleep(1)  # Small delay between messages
                 await bot.send_message(chat_id=chat_id, text="💎💎💎💎💎 ТЕРМІНОВО! ДОСТУПНИЙ ЗАПИС! 💎💎💎💎💎")
-                await asyncio.sleep(1.5)  # Small delay between messages\
+                await asyncio.sleep(1.5)  # Small delay between messages
                 await bot.send_message(chat_id=chat_id, text="🪪🪪🪪🪪🪪🪪 ТЕРМІНОВО! ДОСТУПНИЙ ЗАПИС! 🪪🪪🪪🪪🪪🪪")
-                await asyncio.sleep(1.5)  # Small delay between messages\
+                await asyncio.sleep(1.5)  # Small delay between messages
                 await bot.send_message(chat_id=chat_id, text="🚨 ТЕРМІНОВО! ДОСТУПНИЙ ЗАПИС менше 1 року! 🚨")
 
             else:
@@ -100,7 +81,7 @@ async def send_to_all_subscribers(bot, message, is_urgent=False):
                     chat_id=chat_id,
                     text=message,
                     disable_notification=True  # Optional: make regular updates silent
-            )
+                )
         
             logger.info(f"Message sent to user {user_id}, chat {chat_id}")
         except Exception as e:
@@ -250,20 +231,31 @@ async def global_visa_check(bot, interval=300):
                     
                     # Add additional information
                     try:
-                        appointment_date = datetime.datetime.strptime(current_earliest_date, '%Y %b %d')
-                        six_months = datetime.datetime.now() + datetime.timedelta(days=180)
-                        year = datetime.datetime.now() + datetime.timedelta(days=301)
-                        days_until = (appointment_date - datetime.datetime.now()).days
+                        # Try different date formats
+                        date_formats = ['%Y-%m-%d', '%Y %b %d']
+                        appointment_date = None
                         
-                        notification_parts.append(f"⏳ Days until appointment: {days_until}")
-                        
-                        # can it be made different notification for less than 6 months?
-                        if appointment_date < year:
-                            is_urgent = True
-                            notification_parts.append("🚨🚨🚨🚨🚨 URGENT: Less than 300 days! 🚨🚨🚨🚨🚨")
-                        # Check if the appointment date is less than 6 months from now
-                        if appointment_date < six_months:
-                            notification_parts.append("🚨🚨🚨🚨🚨 URGENT: Less than 6 months! 🚨🚨🚨🚨🚨")
+                        for date_format in date_formats:
+                            try:
+                                appointment_date = datetime.datetime.strptime(current_earliest_date, date_format)
+                                break  # If successful, break the loop
+                            except ValueError:
+                                continue
+                                
+                        if appointment_date:
+                            six_months = datetime.datetime.now() + datetime.timedelta(days=180)
+                            year = datetime.datetime.now() + datetime.timedelta(days=301)
+                            days_until = (appointment_date - datetime.datetime.now()).days
+                            
+                            notification_parts.append(f"⏳ Days until appointment: {days_until}")
+                            
+                            # Check if appointment is less than a year away
+                            if appointment_date < year:
+                                is_urgent = True
+                                notification_parts.append("🚨🚨🚨🚨🚨 URGENT: Less than 300 days! 🚨🚨🚨🚨🚨")
+                            # Check if the appointment date is less than 6 months from now
+                            if appointment_date < six_months:
+                                notification_parts.append("🚨🚨🚨🚨🚨 URGENT: Less than 6 months! 🚨🚨🚨🚨🚨")
                     except Exception as e:
                         logger.error(f"Error comparing dates: {e}")
                     
@@ -280,12 +272,29 @@ async def global_visa_check(bot, interval=300):
                 
                 # Case 2: Earlier appointment became available
                 elif current_earliest_date and last_available_date:
-                    # Compare dates
+                    # Compare dates - try different formats
                     try:
-                        current_date = datetime.datetime.strptime(current_earliest_date, '%Y %b %d')
-                        last_date = datetime.datetime.strptime(last_available_date, '%Y %b %d')
+                        date_formats = ['%Y-%m-%d', '%Y %b %d']
+                        current_date = None
+                        last_date = None
                         
-                        if current_date < last_date:
+                        # Try to parse current_earliest_date
+                        for date_format in date_formats:
+                            try:
+                                current_date = datetime.datetime.strptime(current_earliest_date, date_format)
+                                break
+                            except ValueError:
+                                continue
+                                
+                        # Try to parse last_available_date
+                        for date_format in date_formats:
+                            try:
+                                last_date = datetime.datetime.strptime(last_available_date, date_format)
+                                break
+                            except ValueError:
+                                continue
+                        
+                        if current_date and last_date and current_date < last_date:
                             # Prepare notification
                             notification_parts = [
                                 "🔔🔔🔔 EARLIER APPOINTMENT AVAILABLE! 🔔🔔🔔",
@@ -338,12 +347,24 @@ async def global_visa_check(bot, interval=300):
                     if current_earliest_date:
                         status_message.append(f"✅ Appointments available! Earliest: {current_earliest_date}")
                         
-                        # Calculate days difference
-                        appointment_date = datetime.datetime.strptime(current_earliest_date, '%Y %b %d')
-                        today = datetime.datetime.now()
-                        days_away = (appointment_date - today).days
-                        
-                        status_message.append(f"Days until appointment: {days_away}")
+                        # Try to calculate days away using multiple date formats
+                        try:
+                            date_formats = ['%Y-%m-%d', '%Y %b %d']
+                            appointment_date = None
+                            
+                            for date_format in date_formats:
+                                try:
+                                    appointment_date = datetime.datetime.strptime(current_earliest_date, date_format)
+                                    break
+                                except ValueError:
+                                    continue
+                                    
+                            if appointment_date:
+                                today = datetime.datetime.now()
+                                days_away = (appointment_date - today).days
+                                status_message.append(f"Days until appointment: {days_away}")
+                        except Exception as e:
+                            logger.error(f"Error calculating days in status update: {e}")
                         
                         # Add time slot info
                         if times:
@@ -456,13 +477,24 @@ async def last_pool(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = [f"🔍 Last check: {appointment_data['last_check_time'].strftime('%Y-%m-%d %H:%M:%S')}"]
         
         if appointment_data['last_available_date']:
-            # Calculate how many days away the appointment is
+            # Try different date formats
             try:
-                appointment_date = datetime.datetime.strptime(appointment_data['last_available_date'], '%Y %b %d')
-                today = datetime.datetime.now()
-                days_away = (appointment_date - today).days
+                date_formats = ['%Y-%m-%d', '%Y %b %d']
+                appointment_date = None
                 
-                message.append(f"\n📅 Earliest available date: {appointment_data['last_available_date']} ({days_away} days from today)")
+                for date_format in date_formats:
+                    try:
+                        appointment_date = datetime.datetime.strptime(appointment_data['last_available_date'], date_format)
+                        break
+                    except ValueError:
+                        continue
+                        
+                if appointment_date:
+                    today = datetime.datetime.now()
+                    days_away = (appointment_date - today).days
+                    message.append(f"\n📅 Earliest available date: {appointment_data['last_available_date']} ({days_away} days from today)")
+                else:
+                    message.append(f"\n📅 Earliest available date: {appointment_data['last_available_date']}")
             except Exception as e:
                 message.append(f"\n📅 Earliest available date: {appointment_data['last_available_date']}")
                 logger.error(f"Error calculating days difference: {e}")
@@ -478,12 +510,24 @@ async def last_pool(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i, date in enumerate(sorted_dates[:10], 1):
                 times = appointment_data['available_dates'][date]
                 
-                # Try to calculate days until appointment
+                # Try different date formats
                 try:
-                    appointment_date = datetime.datetime.strptime(date, '%Y %b %d')
-                    today = datetime.datetime.now()
-                    days_away = (appointment_date - today).days
-                    message.append(f"  {i}. 📆 {date} ({days_away} days) - {len(times)} time slots")
+                    date_formats = ['%Y-%m-%d', '%Y %b %d']
+                    appointment_date = None
+                    
+                    for date_format in date_formats:
+                        try:
+                            appointment_date = datetime.datetime.strptime(date, date_format)
+                            break
+                        except ValueError:
+                            continue
+                            
+                    if appointment_date:
+                        today = datetime.datetime.now()
+                        days_away = (appointment_date - today).days
+                        message.append(f"  {i}. 📆 {date} ({days_away} days) - {len(times)} time slots")
+                    else:
+                        message.append(f"  {i}. 📆 {date} - {len(times)} time slots")
                 except Exception as e:
                     message.append(f"  {i}. 📆 {date} - {len(times)} time slots")
                 
@@ -513,41 +557,101 @@ async def last_pool(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("\n".join(message))
 
-def main():
-    """Start the bot."""
-    # Load environment variables
-    load_dotenv()
+# Initialize the Telegram bot
+async def init_telegram_bot():
+    """Initialize and start the Telegram bot."""
+    global telegram_app, global_checker_running
     
     # Get the bot token
     bot_token = os.getenv('TELEGRAM_TOKEN')
     
     if not bot_token:
-        logger.error("Error: TELEGRAM_TOKEN not found in .env file")
-        sys.exit(1)
+        logger.error("Error: TELEGRAM_TOKEN not found in environment variables")
+        return
     
     try:
-        # Start health check server in a separate thread for Cloud Run
-        http_thread = threading.Thread(target=start_health_server, daemon=True)
-        http_thread.start()
-        logger.info("Health check server started in background thread")
-        
         # Create the application
         application_builder = ApplicationBuilder().token(bot_token)
-        application = application_builder.build()
+        telegram_app = application_builder.build()
         
-        # Add only the three essential command handlers
-        application.add_handler(CommandHandler("start", start))  # Subscribe + start checks
-        application.add_handler(CommandHandler("stop", stop))    # Stop checks
-        application.add_handler(CommandHandler("last_pool", last_pool))  # Show 10 earliest appointments
+        # Add the command handlers
+        telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(CommandHandler("stop", stop))
+        telegram_app.add_handler(CommandHandler("last_pool", last_pool))
         
-        # Start the Bot
-        logger.info("Bot is starting with just 3 commands: /start, /stop, /last_pool")
+        logger.info("Bot has been initialized with commands: /start, /stop, /last_pool")
         logger.info(f"Maximum subscribers allowed: {MAX_SUBSCRIBERS}")
-        application.run_polling(drop_pending_updates=True)
+        
+        # Start the bot in webhook mode for production or polling for development
+        if os.getenv('ENV', 'production') == 'development':
+            # Development: use polling
+            await telegram_app.initialize()
+            await telegram_app.start()
+            await telegram_app.updater.start_polling()
+            logger.info("Bot started in polling mode (development)")
+            
+            # Keep the bot running
+            try:
+                await telegram_app.updater.stop_on_signal()
+            finally:
+                await telegram_app.stop()
+        else:
+            # Production: initialize only, webhook will be handled by Flask
+            await telegram_app.initialize()
+            logger.info("Bot initialized in webhook mode (production)")
+            
+            # Optional: If there's an admin user configured, send a startup notification
+            if ADMIN_CHAT_ID:
+                await telegram_app.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text="🚀 Visa Appointment Checker Bot has started on Cloud Run."
+                )
+                
+            # Set the flag to allow starting the checker when a user subscribes
+            global_checker_running = False
+            
     except Exception as e:
-        logger.error(f"Failed to start the bot: {str(e)}")
+        logger.error(f"Failed to initialize the bot: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
+
+# Flask routes for Cloud Run
+@app.route('/', methods=['GET'])
+def home():
+    """Home route for health checks."""
+    return "Visa Appointment Checker Bot is running! 🚀"
+
+@app.route('/webhook', methods=['POST'])
+async def webhook():
+    """Webhook route for Telegram updates."""
+    if request.method == 'POST' and telegram_app:
+        # Get the update from Telegram
+        update_data = request.get_json()
+        update = Update.de_json(update_data, telegram_app.bot)
+        
+        # Process the update
+        await telegram_app.process_update(update)
+        return {'status': 'ok'}
+    
+    return {'status': 'error', 'message': 'Bot not initialized or invalid request'}, 400
+
+def run_bot():
+    """Run the Telegram bot in a separate thread."""
+    asyncio.run(init_telegram_bot())
+
+def main():
+    """Main entry point for the application."""
+    # Start the bot in a separate thread
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # Get the port from the environment variable
+    port = int(os.getenv('PORT', 8080))
+    
+    # Start the Flask app for Cloud Run
+    # Use threaded=True to handle multiple requests
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
 
 if __name__ == '__main__':
     main()
