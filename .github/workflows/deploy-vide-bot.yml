@@ -28,11 +28,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
-    - name: Run linting and tests
-      run: |
-        pip install pytest
-        pytest -v tests/ || true  # Don't fail workflow if tests aren't set up yet
-        
     # Authentication to GCP
     - name: Google Auth
       id: auth
@@ -41,11 +36,21 @@ jobs:
         credentials_json: ${{ secrets.GCP_SA_KEY }}
 
     # Build and deploy to Cloud Run (GCP)
+    - name: Set up Artifact Registry repository
+      run: |
+        gcloud artifacts repositories describe cloud-run-source-deploy \
+          --location=us-central1 \
+          --format="value(name)" || \
+        gcloud artifacts repositories create cloud-run-source-deploy \
+          --repository-format=docker \
+          --location=us-central1 \
+          --description="Docker repository for Cloud Run source deployments"
+
     - name: Deploy to Cloud Run
-      if: ${{ env.DEPLOY_TO == 'gcp' || env.DEPLOY_TO == '' }}
+      id: deploy
       uses: google-github-actions/deploy-cloudrun@v1
       with:
-        service: ${{ env.SERVICE_NAME }}
+        service: visa-appointment-bot
         region: us-central1
         source: .
         env_vars: |
@@ -59,10 +64,6 @@ jobs:
           CHECK_INTERVAL=${{ secrets.CHECK_INTERVAL }}
           MAX_SUBSCRIBERS=${{ secrets.MAX_SUBSCRIBERS }}
           CHAT_ID=${{ secrets.CHAT_ID }}
-
-    # Azure and AWS deployment steps would be added here
-    # These are commented out as you specifically asked about GCP for now
-
     - name: Notify deployment completion
       if: success()
       run: |
