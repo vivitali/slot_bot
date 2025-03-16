@@ -11,6 +11,7 @@ env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: us-central1  # Change this to your preferred GCP region
   SERVICE_NAME: visa-appointment-bot
+  REPOSITORY: visa-appointment-bot
 
 jobs:
   deploy:
@@ -36,10 +37,10 @@ jobs:
       id: get-image
       run: |
         if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-          IMAGE_URI="gcr.io/${{ env.PROJECT_ID }}/visa-appointment-bot:latest"
+          IMAGE_URI="us-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/visa-appointment-bot:latest"
         else
-          # Get the latest image from GCR
-          IMAGE_URI="gcr.io/${{ env.PROJECT_ID }}/visa-appointment-bot:latest"
+          # Get the latest image from Artifact Registry
+          IMAGE_URI="us-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/visa-appointment-bot:latest"
         fi
         echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_OUTPUT
         

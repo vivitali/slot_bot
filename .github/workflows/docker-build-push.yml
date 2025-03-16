@@ -8,6 +8,7 @@ on:
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: us-central1  # Change this to your preferred GCP region
+  REPOSITORY: visa-appointment-bot
   
 jobs:
   build-and-push:
@@ -27,24 +28,24 @@ jobs:
     - name: Set up gcloud
       uses: google-github-actions/setup-gcloud@v1
         
-    - name: Configure Docker for GCR
+    - name: Configure Docker for Artifact Registry
       run: |
-        gcloud --quiet auth configure-docker gcr.io
+        gcloud --quiet auth configure-docker us-docker.pkg.dev
         
     - name: Build Docker image
       run: |
-        docker build -t gcr.io/${{ env.PROJECT_ID }}/visa-appointment-bot:${{ github.sha }} .
-        docker tag gcr.io/${{ env.PROJECT_ID }}/visa-appointment-bot:${{ github.sha }} gcr.io/${{ env.PROJECT_ID }}/visa-appointment-bot:latest
+        docker build -t us-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/visa-appointment-bot:${{ github.sha }} .
+        docker tag us-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/visa-appointment-bot:${{ github.sha }} us-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/visa-appointment-bot:latest
         
-    - name: Push Docker image to GCR
+    - name: Push Docker image to Artifact Registry
       run: |
-        docker push gcr.io/${{ env.PROJECT_ID }}/visa-appointment-bot:${{ github.sha }}
-        docker push gcr.io/${{ env.PROJECT_ID }}/visa-appointment-bot:latest
+        docker push us-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/visa-appointment-bot:${{ github.sha }}
+        docker push us-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/visa-appointment-bot:latest
         
     - name: Output Image URI
       id: image-uri
       run: |
-        echo "IMAGE_URI=gcr.io/${{ env.PROJECT_ID }}/visa-appointment-bot:${{ github.sha }}" >> $GITHUB_OUTPUT
+        echo "IMAGE_URI=us-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/visa-appointment-bot:${{ github.sha }}" >> $GITHUB_OUTPUT
         
     outputs:
-      image_uri: ${{ steps.image-uri.outputs.IMAGE_URI }} 
+      image_uri: ${{ steps.image-uri.outputs.IMAGE_URI }}
