@@ -11,7 +11,7 @@ beautifulsoup4==4.13.3
 python-dotenv==1.0.1
 
 # Flask for Cloud Run web server
-Flask==2.3.3
+Flask==3.1.0
 
 # Additional requirements
 
