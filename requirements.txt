@@ -5,7 +5,7 @@ python-telegram-bot==22.0
 
 # HTTP Requests & Web Parsing
 requests==2.32.3
-beautifulsoup4==4.13.3
+beautifulsoup4==4.13.4
 
 # Environment Variables
 python-dotenv==1.0.1
