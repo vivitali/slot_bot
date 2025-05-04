@@ -16,4 +16,4 @@ Flask==2.3.3
 # Additional requirements
 
 # Note: Don't use logging package - it's a built-in Python module
-aiohttp==3.9.3
+aiohttp==3.11.18
