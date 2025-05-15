@@ -1,7 +1,7 @@
 # Core requirements for US Visa Appointment Slot Checker Bot
 
 # Telegram Bot Framework
-python-telegram-bot==22.0
+python-telegram-bot==22.1
 
 # HTTP Requests & Web Parsing
 requests==2.32.3
